@@ -310,6 +310,24 @@ export class SpritesClient {
   }
 
   /**
+   * Download a file from a sprite as a Buffer.
+   * Uses base64 encoding via cat to handle binary files.
+   */
+  async downloadFile(name: string, path: string): Promise<Buffer> {
+    const result = await this.exec(name, [
+      "bash",
+      "-c",
+      `base64 "${path}"`,
+    ])
+
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to download file ${path}: ${result.stderr}`)
+    }
+
+    return Buffer.from(result.stdout.trim(), "base64")
+  }
+
+  /**
    * Clean up old sprites (inactive for more than maxAgeDays).
    */
   async cleanup(maxAgeDays = 7): Promise<number> {

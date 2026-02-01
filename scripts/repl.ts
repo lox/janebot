@@ -19,7 +19,7 @@ import {
   type ErrorResultMessage,
 } from "@sourcegraph/amp-sdk"
 import { config } from "../src/config.js"
-import { executeInSprite } from "../src/sprite-executor.js"
+import { executeInSprite, type GeneratedFile } from "../src/sprite-executor.js"
 import * as sessions from "../src/sessions.js"
 import { SpritesClient } from "../src/sprites.js"
 import * as spritePool from "../src/sprite-pool.js"
@@ -107,7 +107,7 @@ async function runAmpLocal(
 
 async function runAmpInSprite(
   prompt: string
-): Promise<{ content: string; threadId: string | undefined }> {
+): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; spriteName: string }> {
   const result = await executeInSprite({
     channelId: FAKE_CHANNEL_ID,
     threadTs: threadTs,
@@ -115,7 +115,12 @@ async function runAmpInSprite(
     prompt,
     systemPrompt: buildSystemPrompt(FAKE_USER_ID),
   })
-  return { content: result.content, threadId: result.threadId }
+  return {
+    content: result.content,
+    threadId: result.threadId,
+    generatedFiles: result.generatedFiles,
+    spriteName: result.spriteName,
+  }
 }
 
 async function handleMessage(input: string, forceLocal: boolean, quiet = false): Promise<string> {
@@ -123,7 +128,7 @@ async function handleMessage(input: string, forceLocal: boolean, quiet = false):
   messageCount++
 
   try {
-    let result: { content: string; threadId: string | undefined }
+    let result: { content: string; threadId: string | undefined; generatedFiles?: GeneratedFile[]; spriteName?: string }
 
     // Get existing session
     const existingSession = sessions.get(FAKE_CHANNEL_ID, threadTs)
@@ -143,6 +148,14 @@ async function handleMessage(input: string, forceLocal: boolean, quiet = false):
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
     if (!quiet) console.log(`\x1b[90m  [Completed in ${duration}s]\x1b[0m`)
+
+    // Show generated files info
+    if (result.generatedFiles && result.generatedFiles.length > 0) {
+      console.log(`\x1b[90m  [Generated ${result.generatedFiles.length} file(s):]\x1b[0m`)
+      for (const file of result.generatedFiles) {
+        console.log(`\x1b[90m    - ${file.path}\x1b[0m`)
+      }
+    }
 
     return result.content
   } catch (error) {
