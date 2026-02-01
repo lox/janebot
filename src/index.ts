@@ -1,8 +1,10 @@
 import "dotenv/config"
-import { readFileSync } from "fs"
+import { readFileSync, mkdirSync, writeFileSync, rmSync } from "fs"
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
+import express from "express"
 import { App, LogLevel } from "@slack/bolt"
+import { WebClient } from "@slack/web-api"
 import {
   execute,
   type StreamMessage,
@@ -12,6 +14,7 @@ import {
 import { config, isUserAllowed, isChannelAllowed } from "./config.js"
 import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
+import { createSlackMcpRouter } from "./slack-mcp.js"
 
 /**
  * Clean up Slack message formatting.
@@ -213,6 +216,7 @@ const LOCAL_ENABLED_TOOLS = [
   "undo_edit",
   "web_search",
   "painter",
+  "mcp__*", // All MCP tools (e.g., mcp__slack__read_channel)
   // Excluded: find_thread, read_thread, handoff, task_list
 ]
 
@@ -249,13 +253,27 @@ async function runAmpLocal(
   existingThreadId: string | undefined,
   userId: string
 ): Promise<{ content: string; threadId: string | undefined }> {
+  // Create settings file with MCP permissions (required for MCP servers to work)
+  // Allow only explicitly configured MCP servers
+  const settingsDir = join(config.workspaceDir, ".tmp", `local-${Date.now()}`)
+  mkdirSync(settingsDir, { recursive: true })
+  const settingsFile = join(settingsDir, "settings.json")
+  const mcpServerNames = Object.keys(config.mcpServers)
+  const settings = {
+    "amp.mcpPermissions": mcpServerNames.map((server) => ({ server, action: "allow" })),
+  }
+  writeFileSync(settingsFile, JSON.stringify(settings, null, 2))
+
   const messages = execute({
     prompt,
     options: {
       cwd: config.workspaceDir,
       mode: config.agentMode,
+      settingsFile,
       mcpConfig:
-        Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
+        Object.keys(config.mcpServers).length > 0
+          ? (config.mcpServers as Record<string, { command: string; args?: string[] } | { url: string; headers?: Record<string, string> }>)
+          : undefined,
       continue: existingThreadId ?? false,
       systemPrompt: buildSystemPrompt(userId),
       labels: [`slack-user-${userId}`],
@@ -268,22 +286,31 @@ async function runAmpLocal(
   let threadId: string | undefined
   let content = ""
 
-  for await (const message of messages) {
-    if ("session_id" in message && message.session_id) {
-      threadId = message.session_id
-    }
+  try {
+    for await (const message of messages) {
+      if ("session_id" in message && message.session_id) {
+        threadId = message.session_id
+      }
 
-    if (message.type === "result") {
-      if ((message as ResultMessage).subtype === "success") {
-        content = (message as ResultMessage).result
-      } else {
-        const errorMsg = message as ErrorResultMessage
-        throw new Error(errorMsg.error ?? "Execution failed")
+      if (message.type === "result") {
+        if ((message as ResultMessage).subtype === "success") {
+          content = (message as ResultMessage).result
+        } else {
+          const errorMsg = message as ErrorResultMessage
+          throw new Error(errorMsg.error ?? "Execution failed")
+        }
       }
     }
-  }
 
-  return { content, threadId }
+    return { content, threadId }
+  } finally {
+    // Cleanup settings file
+    try {
+      rmSync(settingsDir, { recursive: true, force: true })
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
 }
 
 interface AmpExecutionResult {
@@ -661,6 +688,27 @@ async function main() {
   if (config.spritesToken) {
     const client = new SpritesClient(config.spritesToken)
     spritePool.initPool(client, 2).catch((e) => log.error("Pool init failed", e))
+  }
+
+  // Start MCP HTTP server for Sprites mode (requires public URL)
+  // For local mode, stdio transport is used via config.mcpServers
+  const mcpAuthToken = process.env.SLACK_MCP_TOKEN
+  const mcpUrl = process.env.SLACK_MCP_URL
+  if (mcpAuthToken && mcpUrl && config.spritesToken) {
+    const mcpPort = parseInt(process.env.MCP_PORT || "3000", 10)
+    const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN)
+    const mcpApp = express()
+
+    mcpApp.use("/mcp/slack", createSlackMcpRouter(slackClient, mcpAuthToken))
+
+    // Health check endpoint
+    mcpApp.get("/health", (_req, res) => {
+      res.json({ ok: true, service: "janebot" })
+    })
+
+    mcpApp.listen(mcpPort, () => {
+      log.info("Slack MCP server started", { port: mcpPort, url: mcpUrl })
+    })
   }
 }
 

@@ -10,23 +10,35 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.25.3
-        version: 1.25.3(hono@4.11.7)(zod@3.25.76)
+        version: 1.25.3(hono@4.11.7)(zod@4.3.6)
       '@slack/bolt':
         specifier: ^4.1.0
         version: 4.6.0(@types/express@5.0.6)
+      '@slack/web-api':
+        specifier: ^7.13.0
+        version: 7.13.0
       '@sourcegraph/amp-sdk':
         specifier: latest
         version: 0.1.0-20260201005254-g9e2e086
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
       md-to-slack:
         specifier: ^1.1.7
         version: 1.1.7
       ws:
         specifier: ^8.19.0
         version: 8.19.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
+      '@types/express':
+        specifier: ^5.0.6
+        version: 5.0.6
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.7
@@ -325,8 +337,8 @@ packages:
     resolution: {integrity: sha512-3Y3fDjdfRqxUCf9DJTeammlJBn0i+nupgLx86MIWDePI4Qumy62L4yqdYJPWKfVOWQxKRfPivUey5xYvzcpFNA==}
     engines: {node: '>=18'}
 
-  '@sourcegraph/amp@0.0.1769920891-g4da868':
-    resolution: {integrity: sha512-BlwRH6h0tJifhCEc53FRpFgipOlgA1DpXboBIttywAGclky5ZpnS2yhRzjbrRC+RoissOKOmzV9YVork22t4qw==}
+  '@sourcegraph/amp@0.0.1769932966-g69075b':
+    resolution: {integrity: sha512-JWqKVkXCm0aX+oHyzUXk67SJuxVlrSgO6sWn5LV/M060vMTp2vPYRvI7bWRyUro0efDZTifkI5QB9eLbfOHvqA==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -900,6 +912,9 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+
 snapshots:
 
   '@esbuild/aix-ppc64@0.27.2':
@@ -984,7 +999,7 @@ snapshots:
     dependencies:
       hono: 4.11.7
 
-  '@modelcontextprotocol/sdk@1.25.3(hono@4.11.7)(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.25.3(hono@4.11.7)(zod@4.3.6)':
     dependencies:
       '@hono/node-server': 1.19.9(hono@4.11.7)
       ajv: 8.17.1
@@ -1000,8 +1015,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.1(zod@3.25.76)
+      zod: 4.3.6
+      zod-to-json-schema: 3.25.1(zod@4.3.6)
     transitivePeerDependencies:
       - hono
       - supports-color
@@ -1124,10 +1139,10 @@ snapshots:
 
   '@sourcegraph/amp-sdk@0.1.0-20260201005254-g9e2e086':
     dependencies:
-      '@sourcegraph/amp': 0.0.1769920891-g4da868
+      '@sourcegraph/amp': 0.0.1769932966-g69075b
       zod: 3.25.76
 
-  '@sourcegraph/amp@0.0.1769920891-g4da868':
+  '@sourcegraph/amp@0.0.1769932966-g69075b':
     dependencies:
       '@napi-rs/keyring': 1.1.9
 
@@ -1721,8 +1736,10 @@ snapshots:
 
   ws@8.19.0: {}
 
-  zod-to-json-schema@3.25.1(zod@3.25.76):
+  zod-to-json-schema@3.25.1(zod@4.3.6):
     dependencies:
-      zod: 3.25.76
+      zod: 4.3.6
 
   zod@3.25.76: {}
+
+  zod@4.3.6: {}

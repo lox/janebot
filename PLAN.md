@@ -118,15 +118,16 @@ A minimal long-running Slack bot that uses the [Amp SDK](https://ampcode.com/man
 **Deliverables**:
 - [x] MCP server configuration (via `MCP_SERVERS` env var)
 - [x] Tool permission management (auto-approve all by default)
-- [ ] Tool output formatting for Slack
+- [x] Tool output formatting for Slack (chunked responses for 4000 char limit)
 
-### Phase 4: Persistence & Reliability
+### Phase 4: Persistence & Reliability ✅
 
 **Goal**: Survive restarts, handle edge cases.
 
 **Deliverables**:
-- [ ] Persist session mappings (SQLite or JSON file)
-- [ ] Graceful shutdown (finish current request)
+- [x] Persist session mappings (JSON file with debounced saves)
+- [x] Graceful shutdown (SIGINT/SIGTERM handlers save sessions)
+- [x] Session cleanup (removes sessions older than 30 days)
 - [ ] Rate limiting per user
 - [ ] Error recovery and retry logic
 

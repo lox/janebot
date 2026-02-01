@@ -1,9 +1,13 @@
 import "dotenv/config"
+import { fileURLToPath } from "url"
+import { createRequire } from "module"
 
 export interface McpServerConfig {
-  command: string
+  command?: string
   args?: string[]
   env?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
 }
 
 export interface JanebotConfig {
@@ -57,6 +61,42 @@ function parseMcpServers(): Record<string, McpServerConfig> {
   return servers
 }
 
+function buildMcpServers(): Record<string, McpServerConfig> {
+  const servers = parseMcpServers()
+
+  // Add Slack MCP server for local execution mode (stdio transport)
+  // For Sprites mode, the HTTP server is configured in sprite-executor.ts
+  if (process.env.ALLOW_LOCAL_EXECUTION === "true" && process.env.SLACK_BOT_TOKEN) {
+    servers.slack = getSlackMcpConfig()!
+  }
+
+  return servers
+}
+
+/**
+ * Get Slack MCP config for stdio transport (local execution).
+ * Returns undefined if SLACK_BOT_TOKEN is not set.
+ */
+export function getSlackMcpConfig(): McpServerConfig | undefined {
+  if (!process.env.SLACK_BOT_TOKEN) return undefined
+
+  // Use require.resolve for tsx (handles various node_modules layouts)
+  // and fileURLToPath for local script (handles spaces, special chars, Windows)
+  const require = createRequire(import.meta.url)
+  const tsxCli = require.resolve("tsx/dist/cli.mjs")
+  const mcpScript = fileURLToPath(new URL("../scripts/slack-mcp-stdio.ts", import.meta.url))
+
+  return {
+    command: process.execPath, // Full path to current node binary
+    args: [tsxCli, mcpScript],
+    // Inherit parent env to preserve PATH, then add/override SLACK_BOT_TOKEN
+    env: {
+      ...process.env,
+      SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
+    },
+  }
+}
+
 export const config: JanebotConfig = {
   workspaceDir: process.env.WORKSPACE_DIR ?? process.cwd(),
   agentMode: (process.env.AGENT_MODE ?? "smart") as "smart" | "rush" | "deep",
@@ -64,7 +104,7 @@ export const config: JanebotConfig = {
   maxResponseLength: parseInt(process.env.MAX_RESPONSE_LENGTH ?? "10000", 10),
   allowedUserIds: parseList(process.env.ALLOWED_USER_IDS),
   allowedChannelIds: parseList(process.env.ALLOWED_CHANNEL_IDS),
-  mcpServers: parseMcpServers(),
+  mcpServers: buildMcpServers(),
   spritesToken: process.env.SPRITES_TOKEN,
   allowLocalExecution: process.env.ALLOW_LOCAL_EXECUTION === "true",
 }

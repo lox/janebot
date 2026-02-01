@@ -13,12 +13,14 @@
 
 import "dotenv/config"
 import * as readline from "readline"
+import * as fs from "fs"
+import * as path from "path"
 import {
   execute,
   type ResultMessage,
   type ErrorResultMessage,
 } from "@sourcegraph/amp-sdk"
-import { config } from "../src/config.js"
+import { config, getSlackMcpConfig } from "../src/config.js"
 import { executeInSprite, type GeneratedFile } from "../src/sprite-executor.js"
 import * as sessions from "../src/sessions.js"
 import { SpritesClient } from "../src/sprites.js"
@@ -51,6 +53,7 @@ const LOCAL_ENABLED_TOOLS = [
   "undo_edit",
   "web_search",
   "painter",
+  "mcp__*", // All MCP tools
 ]
 
 function buildSystemPrompt(userId: string): string {
@@ -68,16 +71,37 @@ async function runAmpLocal(
   prompt: string,
   existingThreadId: string | undefined
 ): Promise<{ content: string; threadId: string | undefined }> {
+  // Build MCP config - include Slack for local mode even if ALLOW_LOCAL_EXECUTION isn't in .env
+  const mcpServers: Record<string, { command: string; args?: string[]; env?: Record<string, string> }> = {
+    ...config.mcpServers as Record<string, { command: string; args?: string[]; env?: Record<string, string> }>,
+  }
+  const slackMcp = getSlackMcpConfig()
+  if (slackMcp && !mcpServers.slack) {
+    mcpServers.slack = slackMcp as { command: string; args?: string[]; env?: Record<string, string> }
+  }
+
+  // Create a settings file for MCP permissions (required since amp now has MCP permission system)
+  // The mcpServers themselves are passed via mcpConfig option
+  // Allow only explicitly configured MCP servers
+  const settingsDir = path.join(config.workspaceDir, ".tmp", `repl-${Date.now()}`)
+  fs.mkdirSync(settingsDir, { recursive: true })
+  const settingsFile = path.join(settingsDir, "settings.json")
+  const mcpServerNames = Object.keys(mcpServers)
+  const settings: Record<string, unknown> = {
+    "amp.mcpPermissions": mcpServerNames.map((server) => ({ server, action: "allow" })),
+  }
+  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2))
+
   const messages = execute({
     prompt,
     options: {
       cwd: config.workspaceDir,
       mode: config.agentMode,
-      mcpConfig:
-        Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
+      settingsFile,
+      mcpConfig: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       continue: existingThreadId ?? false,
       systemPrompt: buildSystemPrompt(FAKE_USER_ID),
-      labels: [`repl-${FAKE_USER_ID}`],
+      labels: ["repl-user"],
       permissions: [{ tool: "*", action: "allow" }],
       enabledTools: LOCAL_ENABLED_TOOLS,
       logLevel: "warn",

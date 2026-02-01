@@ -21,6 +21,7 @@ mise exec node -- pnpm typecheck    # Type check
 - `src/sessions.ts` - Persistent session store (Slack thread → Amp thread + Sprite)
 - `src/sprites.ts` - Sprites API client for sandboxed execution
 - `src/sprite-executor.ts` - Executes Amp inside Sprite VMs
+- `src/slack-mcp.ts` - Slack MCP server for Sprites (see [docs/slack-mcp.md](docs/slack-mcp.md))
 - Uses Amp SDK `execute()` for local execution, or Sprites for sandboxed execution
 
 ## Key Patterns

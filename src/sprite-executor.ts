@@ -298,6 +298,31 @@ export async function executeInSprite(
     log.info("Settings file written", { sprite: spriteName })
   }
 
+  // Write MCP config for Slack access if configured
+  // Amp reads from ~/.config/amp/settings.json
+  const slackMcpToken = process.env.SLACK_MCP_TOKEN
+  const slackMcpUrl = process.env.SLACK_MCP_URL // e.g., https://janebot.fly.dev/mcp/slack
+  if (slackMcpToken && slackMcpUrl) {
+    const mcpConfigFile = "/home/sprite/.config/amp/settings.json"
+    const mcpConfig = {
+      "amp.mcpServers": {
+        slack: {
+          url: slackMcpUrl,
+          headers: {
+            Authorization: `Bearer ${slackMcpToken}`,
+          },
+        },
+      },
+    }
+    const mcpJson = JSON.stringify(mcpConfig).replace(/'/g, "'\\''")
+    await client.exec(spriteName, [
+      "bash",
+      "-c",
+      `mkdir -p /home/sprite/.config/amp && printf '%s' '${mcpJson}' > ${mcpConfigFile}`,
+    ], { timeoutMs: 30000 })
+    log.info("MCP config written", { sprite: spriteName, url: slackMcpUrl })
+  }
+
   // Build CLI args: amp [threads continue <id>] --execute --stream-json [options]
   const args: string[] = [AMP_BIN]
 
