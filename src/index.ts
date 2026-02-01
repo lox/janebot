@@ -84,6 +84,7 @@ async function runAmp(
       dangerouslyAllowAll: true,
       continue: existingThreadId ?? false,
       systemPrompt: soulPrompt || undefined,
+      logLevel: "warn",
     },
   })
 
