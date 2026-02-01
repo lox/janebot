@@ -21,6 +21,12 @@ export interface JanebotConfig {
 
   // MCP servers
   mcpServers: Record<string, McpServerConfig>
+
+  // Sprites (required for sandboxed execution)
+  spritesToken: string | undefined
+
+  // Local execution (requires explicit opt-in, no sandbox)
+  allowLocalExecution: boolean
 }
 
 function parseList(value: string | undefined): string[] {
@@ -59,6 +65,8 @@ export const config: JanebotConfig = {
   allowedUserIds: parseList(process.env.ALLOWED_USER_IDS),
   allowedChannelIds: parseList(process.env.ALLOWED_CHANNEL_IDS),
   mcpServers: parseMcpServers(),
+  spritesToken: process.env.SPRITES_TOKEN,
+  allowLocalExecution: process.env.ALLOW_LOCAL_EXECUTION === "true",
 }
 
 /**

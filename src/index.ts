@@ -12,7 +12,24 @@ import {
 import { config, isUserAllowed, isChannelAllowed } from "./config.js"
 import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
+
+/**
+ * Clean up Slack message formatting.
+ * - Converts broken local file links to inline code
+ *   e.g. "</home/sprite/foo.py|foo.py>" → "`foo.py`"
+ */
+function cleanSlackMessage(text: string): string {
+  // Match Slack links that are local file paths (not URLs)
+  // Format: <path|label> where path starts with / and doesn't have ://
+  return text.replace(/<(\/[^|>]+)\|([^>]+)>/g, (_match, _path, label) => {
+    return `\`${label}\``
+  })
+}
 import * as log from "./logger.js"
+import * as sessions from "./sessions.js"
+import { executeInSprite } from "./sprite-executor.js"
+import { SpritesClient } from "./sprites.js"
+import * as spritePool from "./sprite-pool.js"
 
 // Load SOUL.md for Jane's personality
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -24,8 +41,7 @@ try {
   // SOUL.md is optional
 }
 
-// Session manager: maps Slack thread_ts → Amp thread ID
-const sessions = new Map<string, string>()
+
 
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
@@ -123,10 +139,52 @@ When using find_thread or read_thread:
   return soulPrompt ? `${soulPrompt}\n${privacyContext}` : privacyContext
 }
 
+// Tools enabled for local execution
+const LOCAL_ENABLED_TOOLS = [
+  "Bash",
+  "create_file",
+  "edit_file",
+  "finder",
+  "glob",
+  "Grep",
+  "librarian",
+  "look_at",
+  "mermaid",
+  "oracle",
+  "Read",
+  "read_web_page",
+  "skill",
+  "Task",
+  "undo_edit",
+  "web_search",
+  "painter",
+  // Excluded: find_thread, read_thread, handoff, task_list
+]
+
 /**
- * Execute Amp and return the result content and thread ID.
+ * Execute Amp inside a Sprite sandbox.
+ * Amp CLI runs in the Sprite with full tool access.
  */
-async function runAmp(
+async function runAmpInSprite(
+  prompt: string,
+  userId: string,
+  channelId: string,
+  threadTs: string
+): Promise<{ content: string; threadId: string | undefined }> {
+  const result = await executeInSprite({
+    channelId,
+    threadTs,
+    userId,
+    prompt,
+    systemPrompt: buildSystemPrompt(userId),
+  })
+  return { content: result.content, threadId: result.threadId }
+}
+
+/**
+ * Execute Amp locally (for trusted single-user setups).
+ */
+async function runAmpLocal(
   prompt: string,
   existingThreadId: string | undefined,
   userId: string
@@ -142,26 +200,7 @@ async function runAmp(
       systemPrompt: buildSystemPrompt(userId),
       labels: [`slack-user-${userId}`],
       permissions: [{ tool: "*", action: "allow" }],
-      enabledTools: [
-        "Bash",
-        "create_file",
-        "edit_file",
-        "finder",
-        "glob",
-        "Grep",
-        "librarian",
-        "look_at",
-        "mermaid",
-        "oracle",
-        "Read",
-        "read_web_page",
-        "skill",
-        "Task",
-        "undo_edit",
-        "web_search",
-        "painter",
-        // Excluded: find_thread, read_thread, handoff, task_list
-      ],
+      enabledTools: LOCAL_ENABLED_TOOLS,
       logLevel: "warn",
     },
   })
@@ -170,12 +209,10 @@ async function runAmp(
   let content = ""
 
   for await (const message of messages) {
-    // Capture thread ID from any message
     if ("session_id" in message && message.session_id) {
       threadId = message.session_id
     }
 
-    // Extract final result
     if (message.type === "result") {
       if ((message as ResultMessage).subtype === "success") {
         content = (message as ResultMessage).result
@@ -187,6 +224,32 @@ async function runAmp(
   }
 
   return { content, threadId }
+}
+
+/**
+ * Execute Amp with appropriate isolation based on configuration.
+ */
+async function runAmp(
+  prompt: string,
+  existingThreadId: string | undefined,
+  userId: string,
+  channelId: string,
+  threadTs: string
+): Promise<{ content: string; threadId: string | undefined }> {
+  // Use Sprites sandbox if configured
+  if (config.spritesToken) {
+    return runAmpInSprite(prompt, userId, channelId, threadTs)
+  }
+
+  // Local execution requires explicit opt-in
+  if (config.allowLocalExecution) {
+    return runAmpLocal(prompt, existingThreadId, userId)
+  }
+
+  throw new Error(
+    "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
+      "or ALLOW_LOCAL_EXECUTION=true for unsandboxed local execution."
+  )
 }
 
 // Handle @mentions
@@ -245,11 +308,11 @@ app.event("app_mention", async ({ event, client, say }) => {
     // Wait for debounce to collect any rapid follow-up messages
     let prompt = await debounce(debounceKey, rawText)
 
-    const existingThreadId = sessions.get(sessionKey)
+    const existingSession = sessions.get(channelId, slackThreadTs)
 
     // If no Amp thread exists but we're in a Slack thread, fetch history as context
     const isInThread = event.thread_ts !== undefined
-    if (!existingThreadId && isInThread) {
+    if (!existingSession?.ampThreadId && isInThread) {
       const authTest = await client.auth.test()
       const history = await fetchThreadContext(
         client,
@@ -264,18 +327,19 @@ app.event("app_mention", async ({ event, client, say }) => {
 
     log.request("mention", userId, channelId, prompt)
 
-    // Execute with Amp SDK
-    const result = await runAmp(prompt, existingThreadId, userId)
+    // Execute with Amp SDK (uses Sprites sandbox if configured)
+    const result = await runAmp(prompt, existingSession?.ampThreadId, userId, channelId, slackThreadTs)
 
-    // Store thread mapping for future messages
-    if (result.threadId) {
-      sessions.set(sessionKey, result.threadId)
+    // Store thread mapping for future messages (handled by sprite-executor for Sprites mode)
+    if (result.threadId && config.allowLocalExecution && !config.spritesToken) {
+      sessions.set(channelId, slackThreadTs, result.threadId, userId)
     }
 
     // Send response (chunked if needed for Slack's 4000 char limit)
     const content =
       result.content || "I completed the task but have no response to share."
-    await sendChunkedResponse(say, markdownToSlack(content), slackThreadTs)
+    const formatted = cleanSlackMessage(markdownToSlack(content))
+    await sendChunkedResponse(say, formatted, slackThreadTs)
 
     log.response("mention", userId, Date.now() - startTime, true)
 
@@ -373,11 +437,11 @@ app.event("message", async ({ event, client, say }) => {
 
     let prompt = await debounce(debounceKey, rawText)
 
-    const existingThreadId = sessions.get(sessionKey)
+    const existingSession = sessions.get(channelId, slackThreadTs)
 
     // If no Amp thread exists but we're in a Slack thread, fetch history as context
     const isInThread = messageEvent.thread_ts !== undefined
-    if (!existingThreadId && isInThread) {
+    if (!existingSession?.ampThreadId && isInThread) {
       const authTest = await client.auth.test()
       const history = await fetchThreadContext(
         client,
@@ -392,14 +456,16 @@ app.event("message", async ({ event, client, say }) => {
 
     log.request("dm", userId, channelId, prompt)
 
-    const result = await runAmp(prompt, existingThreadId, userId)
+    const result = await runAmp(prompt, existingSession?.ampThreadId, userId, channelId, slackThreadTs)
 
-    if (result.threadId) {
-      sessions.set(sessionKey, result.threadId)
+    // Store thread mapping for future messages (handled by sprite-executor for Sprites mode)
+    if (result.threadId && config.allowLocalExecution && !config.spritesToken) {
+      sessions.set(channelId, slackThreadTs, result.threadId, userId)
     }
 
     const content = result.content || "Done."
-    await sendChunkedResponse(say, markdownToSlack(content), slackThreadTs)
+    const formatted = cleanSlackMessage(markdownToSlack(content))
+    await sendChunkedResponse(say, formatted, slackThreadTs)
 
     log.response("dm", userId, Date.now() - startTime, true)
 
@@ -484,13 +550,34 @@ async function sendChunkedResponse(
 
 // Start the app
 async function main() {
+  // Validate execution environment is configured
+  if (!config.spritesToken && !config.allowLocalExecution) {
+    throw new Error(
+      "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
+        "or ALLOW_LOCAL_EXECUTION=true for unsandboxed local execution."
+    )
+  }
+
+  // Load persistent sessions
+  sessions.load()
+
+  // Start Slack first so we can accept messages immediately
   await app.start()
+
+  const executionMode = config.spritesToken ? "sprites" : "local (UNSANDBOXED)"
   log.startup({
     workspace: config.workspaceDir,
     mode: config.agentMode,
     debounce: config.debounceMs,
     hasSoul: !!soulPrompt,
+    execution: executionMode,
   })
+
+  // Initialize sprite pool in background (don't block startup)
+  if (config.spritesToken) {
+    const client = new SpritesClient(config.spritesToken)
+    spritePool.initPool(client, 2).catch((e) => log.error("Pool init failed", e))
+  }
 }
 
 main().catch((err) => log.error("Startup failed", err))

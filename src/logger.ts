@@ -66,6 +66,7 @@ export function startup(config: {
   mode: string
   debounce: number
   hasSoul: boolean
+  execution: string
 }): void {
   console.log(`
 ${COLORS.cyan}⚡ janebot${COLORS.reset}
@@ -73,5 +74,6 @@ ${COLORS.cyan}⚡ janebot${COLORS.reset}
    mode: ${config.mode}
    debounce: ${config.debounce}ms
    soul: ${config.hasSoul ? "loaded" : "none"}
+   execution: ${config.execution}
 `)
 }

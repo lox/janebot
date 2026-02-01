@@ -18,8 +18,10 @@ mise exec node -- pnpm typecheck    # Type check
 - `src/index.ts` - Main entry point, Slack event handlers
 - `src/config.ts` - Configuration loading from environment
 - `src/debouncer.ts` - Message debouncing for rapid messages
-- Sessions stored in-memory (Map of Slack thread → Amp thread ID)
-- Uses Amp SDK `execute()` for agent interactions
+- `src/sessions.ts` - Persistent session store (Slack thread → Amp thread + Sprite)
+- `src/sprites.ts` - Sprites API client for sandboxed execution
+- `src/sprite-executor.ts` - Executes Amp inside Sprite VMs
+- Uses Amp SDK `execute()` for local execution, or Sprites for sandboxed execution
 
 ## Key Patterns
 
