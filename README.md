@@ -1,39 +1,54 @@
+<p align="center">
+  <img src="assets/icon.png" width="128" alt="Jane" />
+</p>
+
 # janebot
 
-A Slack bot powered by the [Amp SDK](https://ampcode.com/manual/sdk).
+Jane is a Slack bot powered by the [Amp SDK](https://ampcode.com/manual/sdk). She has opinions and won't say "Great question!".
+
+[SOUL.md](./SOUL.md) defines her personality.
 
 ## Setup
 
 1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) using `slack-manifest.yaml`
 2. Generate an App-Level Token with `connections:write` scope
-3. Install the app to your workspace
+3. Install to your workspace
 
 ```bash
 cp .env.example .env
-# Fill in SLACK_BOT_TOKEN, SLACK_APP_TOKEN, AMP_API_KEY
+# Add your tokens
 
 pnpm install
 pnpm dev
 ```
 
-Mention `@janebot` in a channel or send a DM.
+Mention `@janebot` in a channel or DM her.
 
-## Configuration
+## Config
 
-| Variable | Description |
+| Variable | What it does |
 |----------|-------------|
 | `SLACK_BOT_TOKEN` | Bot token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | App-level token (`xapp-...`) |
 | `AMP_API_KEY` | From [ampcode.com/settings](https://ampcode.com/settings) |
-| `WORKSPACE_DIR` | Directory the agent operates in |
+| `WORKSPACE_DIR` | Where Jane works |
 | `AGENT_MODE` | `smart`, `rush`, or `deep` |
-| `ALLOWED_USER_IDS` | Comma-separated allowlist (empty = all) |
-| `ALLOWED_CHANNEL_IDS` | Comma-separated allowlist (empty = all) |
+| `ALLOWED_USER_IDS` | Who can talk to her |
+| `ALLOWED_CHANNEL_IDS` | Where she listens |
+
+Empty allowlists mean no restrictions.
+
+## Run locally
+
+```bash
+pnpm dev
+```
+
+Logs show requests and response times. Restart to pick up changes.
 
 ## Deploy
 
 ```bash
-# Fly.io
 fly launch --copy-config
 fly secrets set SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... AMP_API_KEY=...
 fly deploy
