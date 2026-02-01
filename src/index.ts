@@ -1,4 +1,7 @@
 import "dotenv/config"
+import { readFileSync } from "fs"
+import { join, dirname } from "path"
+import { fileURLToPath } from "url"
 import { App, LogLevel } from "@slack/bolt"
 import {
   execute,
@@ -9,6 +12,16 @@ import {
 import { config, isUserAllowed, isChannelAllowed } from "./config.js"
 import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
+
+// Load SOUL.md for Jane's personality
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const soulPath = join(__dirname, "..", "SOUL.md")
+let soulPrompt = ""
+try {
+  soulPrompt = readFileSync(soulPath, "utf-8")
+} catch {
+  console.warn("SOUL.md not found, running without personality")
+}
 
 // Session manager: maps Slack thread_ts → Amp thread ID
 const sessions = new Map<string, string>()
@@ -70,6 +83,7 @@ async function runAmp(
         Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
       dangerouslyAllowAll: true,
       continue: existingThreadId ?? false,
+      systemPrompt: soulPrompt || undefined,
     },
   })
 
