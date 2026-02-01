@@ -13,7 +13,7 @@ importers:
         version: 4.6.0(@types/express@5.0.6)
       '@sourcegraph/amp-sdk':
         specifier: latest
-        version: 0.1.0-20260131201006-g296e2ef
+        version: 0.1.0-20260201005254-g9e2e086
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
@@ -296,8 +296,8 @@ packages:
     resolution: {integrity: sha512-ERcExbWrnkDN8ovoWWe6Wgt/usanj1dWUd18dJLpctUI4mlPS0nKt81Joh8VI+OPbNnY1lIilVt9gdMBD9U2ig==}
     engines: {node: '>= 18', npm: '>= 8.6.0'}
 
-  '@sourcegraph/amp-sdk@0.1.0-20260131201006-g296e2ef':
-    resolution: {integrity: sha512-8oJobsKcJ08+e9+RHLrMgJJwiwHKBrqA831RnY/WDqDCwPu5048Ypt/i4r0vu0s1a7i+DHisDC7cBzpIx8E+iQ==}
+  '@sourcegraph/amp-sdk@0.1.0-20260201005254-g9e2e086':
+    resolution: {integrity: sha512-3Y3fDjdfRqxUCf9DJTeammlJBn0i+nupgLx86MIWDePI4Qumy62L4yqdYJPWKfVOWQxKRfPivUey5xYvzcpFNA==}
     engines: {node: '>=18'}
 
   '@sourcegraph/amp@0.0.1769889688-g296e2e':
@@ -982,7 +982,7 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  '@sourcegraph/amp-sdk@0.1.0-20260131201006-g296e2ef':
+  '@sourcegraph/amp-sdk@0.1.0-20260201005254-g9e2e086':
     dependencies:
       '@sourcegraph/amp': 0.0.1769889688-g296e2e
       zod: 3.25.76

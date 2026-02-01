@@ -4,7 +4,7 @@
 
 Jane is a Slack bot powered by the [Amp SDK](https://ampcode.com/manual/sdk). She has opinions and won't say "Great question!".
 
-[SOUL.md](./SOUL.md) defines her personality.
+[SOUL.md](./SOUL.md) defines her personality. [docs/threads.md](./docs/threads.md) explains the thread model.
 
 ## Setup
 

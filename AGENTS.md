@@ -23,8 +23,9 @@ mise exec node -- pnpm typecheck    # Type check
 
 ## Key Patterns
 
-1. **Thread mapping**: Each Slack thread maps to an Amp thread for continuity
+1. **Thread mapping**: Each Slack thread maps to an Amp thread for continuity (see [docs/threads.md](docs/threads.md))
 2. **Message debouncing**: Combines rapid messages into a single prompt
 3. **Chunked responses**: Split long responses for Slack's 4000 char limit
 4. **Visual feedback**: React with 👀 (processing), ✅ (done), ❌ (error)
 5. **Authorization**: User and channel allowlists via env vars
+6. **Thread labels**: Each thread labeled with `slack-user:{userId}` for privacy-scoped search

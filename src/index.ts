@@ -68,11 +68,68 @@ const app = new App({
 })
 
 /**
+ * Fetch Slack thread history as fallback context when no Amp thread exists.
+ * Returns formatted string of previous messages, excluding bot's own messages.
+ */
+async function fetchThreadContext(
+  client: typeof app.client,
+  channel: string,
+  threadTs: string,
+  botUserId: string | undefined
+): Promise<string | null> {
+  try {
+    const result = await client.conversations.replies({
+      channel,
+      ts: threadTs,
+      limit: 20, // Last 20 messages should be enough context
+    })
+
+    if (!result.messages || result.messages.length <= 1) {
+      return null // No history or just the current message
+    }
+
+    // Format messages, skip bot's own messages to avoid confusion
+    const formatted = result.messages
+      .slice(0, -1) // Exclude the latest message (we already have it)
+      .filter((m) => m.user !== botUserId) // Skip bot's messages
+      .map((m) => {
+        const text = m.text?.replace(/<@[A-Z0-9]+>/g, "").trim() || ""
+        return `[${m.user}]: ${text}`
+      })
+      .filter((line) => line.includes(": ") && line.split(": ")[1]) // Skip empty
+      .join("\n")
+
+    return formatted || null
+  } catch (error) {
+    log.error("Failed to fetch thread history", error)
+    return null
+  }
+}
+
+/**
+ * Build context-aware system prompt with user info for privacy.
+ */
+function buildSystemPrompt(userId: string): string {
+  const privacyContext = `
+## Current Context
+- Slack User ID: ${userId}
+
+## Thread Privacy Rules
+When using find_thread or read_thread:
+- For "my threads" or "my previous conversations": filter with "label:slackuser:${userId}"
+- Public and workspace-visible threads are fine to search and reference
+- DM conversations with other users are private — don't access threads labeled with other user IDs
+`
+  return soulPrompt ? `${soulPrompt}\n${privacyContext}` : privacyContext
+}
+
+/**
  * Execute Amp and return the result content and thread ID.
  */
 async function runAmp(
   prompt: string,
-  existingThreadId: string | undefined
+  existingThreadId: string | undefined,
+  userId: string
 ): Promise<{ content: string; threadId: string | undefined }> {
   const messages = execute({
     prompt,
@@ -83,7 +140,8 @@ async function runAmp(
         Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
       dangerouslyAllowAll: true,
       continue: existingThreadId ?? false,
-      systemPrompt: soulPrompt || undefined,
+      systemPrompt: buildSystemPrompt(userId),
+      // labels: [`slackuser:${userId}`], // BUG: labels option crashes Amp CLI
       logLevel: "warn",
     },
   })
@@ -165,14 +223,29 @@ app.event("app_mention", async ({ event, client, say }) => {
     inFlight.add(sessionKey)
 
     // Wait for debounce to collect any rapid follow-up messages
-    const prompt = await debounce(debounceKey, rawText)
-
-    log.request("mention", userId, channelId, prompt)
+    let prompt = await debounce(debounceKey, rawText)
 
     const existingThreadId = sessions.get(sessionKey)
 
+    // If no Amp thread exists but we're in a Slack thread, fetch history as context
+    const isInThread = event.thread_ts !== undefined
+    if (!existingThreadId && isInThread) {
+      const authTest = await client.auth.test()
+      const history = await fetchThreadContext(
+        client,
+        channelId,
+        slackThreadTs,
+        authTest.user_id
+      )
+      if (history) {
+        prompt = `Previous messages in this thread:\n${history}\n\nLatest message: ${prompt}`
+      }
+    }
+
+    log.request("mention", userId, channelId, prompt)
+
     // Execute with Amp SDK
-    const result = await runAmp(prompt, existingThreadId)
+    const result = await runAmp(prompt, existingThreadId, userId)
 
     // Store thread mapping for future messages
     if (result.threadId) {
@@ -278,13 +351,28 @@ app.event("message", async ({ event, client, say }) => {
   try {
     inFlight.add(sessionKey)
 
-    const prompt = await debounce(debounceKey, rawText)
-
-    log.request("dm", userId, channelId, prompt)
+    let prompt = await debounce(debounceKey, rawText)
 
     const existingThreadId = sessions.get(sessionKey)
 
-    const result = await runAmp(prompt, existingThreadId)
+    // If no Amp thread exists but we're in a Slack thread, fetch history as context
+    const isInThread = messageEvent.thread_ts !== undefined
+    if (!existingThreadId && isInThread) {
+      const authTest = await client.auth.test()
+      const history = await fetchThreadContext(
+        client,
+        channelId,
+        slackThreadTs,
+        authTest.user_id
+      )
+      if (history) {
+        prompt = `Previous messages in this thread:\n${history}\n\nLatest message: ${prompt}`
+      }
+    }
+
+    log.request("dm", userId, channelId, prompt)
+
+    const result = await runAmp(prompt, existingThreadId, userId)
 
     if (result.threadId) {
       sessions.set(sessionKey, result.threadId)
