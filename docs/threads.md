@@ -16,7 +16,7 @@ Each Slack thread maps to an Amp thread. When a user continues a conversation in
 ## Thread Labels
 
 Every thread is labeled with:
-- `slack-user:{userId}` — the Slack user who started the conversation
+- `slack-user-{userId}` — the Slack user who started the conversation (e.g., `slack-user-U0ACLG5KJG1`)
 
 This enables:
 - Searching past conversations with `find_thread`

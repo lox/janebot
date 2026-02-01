@@ -116,7 +116,7 @@ function buildSystemPrompt(userId: string): string {
 
 ## Thread Privacy Rules
 When using find_thread or read_thread:
-- For "my threads" or "my previous conversations": filter with "label:slackuser:${userId}"
+- For "my threads" or "my previous conversations": filter with "label:slack-user-${userId}"
 - Public and workspace-visible threads are fine to search and reference
 - DM conversations with other users are private — don't access threads labeled with other user IDs
 `
@@ -141,7 +141,7 @@ async function runAmp(
       dangerouslyAllowAll: true,
       continue: existingThreadId ?? false,
       systemPrompt: buildSystemPrompt(userId),
-      // labels: [`slackuser:${userId}`], // BUG: labels option crashes Amp CLI
+      labels: [`slack-user-${userId}`],
       logLevel: "warn",
     },
   })
