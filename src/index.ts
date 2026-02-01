@@ -172,8 +172,10 @@ async function uploadGeneratedFiles(
       })
 
       log.info("File uploaded to Slack", { filename: file.filename })
-    } catch (error) {
-      log.error("Failed to upload file", { file: file.path, error })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      log.error(`Failed to upload file ${file.path}`, err)
+      log.info("Upload error details", { filename: file.filename, path: file.path, error: errMsg })
     }
   }
 }
