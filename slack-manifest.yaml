@@ -1,7 +1,8 @@
 display_information:
   name: janebot
   description: AI assistant powered by Amp
-  background_color: "#1a1a2e"
+  long_description: "Jane lives in the spaces between messages. Mention her anywhere or DM her directly—she's curious, occasionally opinionated, and genuinely helpful. She remembers context, writes code, and admits when she doesn't know. Be kind to her."
+  background_color: "#3E1671"
 
 features:
   app_home:

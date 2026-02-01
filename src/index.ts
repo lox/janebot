@@ -16,6 +16,36 @@ const sessions = new Map<string, string>()
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
 
+/**
+ * Format errors for user-friendly display.
+ * Hides technical details and provides actionable messages.
+ */
+function formatErrorForUser(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+
+  // Authentication/configuration issues
+  if (message.includes("No API key") || message.includes("login flow")) {
+    return "I'm not configured properly. Please check the AMP_ACCESS_TOKEN."
+  }
+  if (message.includes("invalid_auth") || message.includes("token")) {
+    return "Authentication failed. Please check the bot configuration."
+  }
+
+  // Rate limiting
+  if (message.includes("rate limit") || message.includes("too many")) {
+    return "I'm being rate limited. Please try again in a moment."
+  }
+
+  // Timeout
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "The request timed out. Try a simpler task or try again."
+  }
+
+  // Generic fallback - don't expose raw error details
+  console.error("Unhandled error type:", message)
+  return "Something went wrong. Please try again."
+}
+
 // Initialize Slack app in Socket Mode
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -148,7 +178,7 @@ app.event("app_mention", async ({ event, client, say }) => {
     cancel(debounceKey)
 
     await say({
-      text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      text: formatErrorForUser(error),
       thread_ts: slackThreadTs,
     })
 
@@ -248,7 +278,7 @@ app.event("message", async ({ event, client, say }) => {
     cancel(debounceKey)
 
     await say({
-      text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      text: formatErrorForUser(error),
       thread_ts: slackThreadTs,
     })
 
