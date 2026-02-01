@@ -10,7 +10,7 @@ A Slack bot powered by the [Amp SDK](https://ampcode.com/manual/sdk).
 
 ```bash
 cp .env.example .env
-# Fill in SLACK_BOT_TOKEN, SLACK_APP_TOKEN, AMP_ACCESS_TOKEN
+# Fill in SLACK_BOT_TOKEN, SLACK_APP_TOKEN, AMP_API_KEY
 
 pnpm install
 pnpm dev
@@ -24,7 +24,7 @@ Mention `@janebot` in a channel or send a DM.
 |----------|-------------|
 | `SLACK_BOT_TOKEN` | Bot token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | App-level token (`xapp-...`) |
-| `AMP_ACCESS_TOKEN` | From [ampcode.com/settings](https://ampcode.com/settings) |
+| `AMP_API_KEY` | From [ampcode.com/settings](https://ampcode.com/settings) |
 | `WORKSPACE_DIR` | Directory the agent operates in |
 | `AGENT_MODE` | `smart`, `rush`, or `deep` |
 | `ALLOWED_USER_IDS` | Comma-separated allowlist (empty = all) |
@@ -35,6 +35,6 @@ Mention `@janebot` in a channel or send a DM.
 ```bash
 # Fly.io
 fly launch --copy-config
-fly secrets set SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... AMP_ACCESS_TOKEN=...
+fly secrets set SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... AMP_API_KEY=...
 fly deploy
 ```
