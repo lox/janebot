@@ -118,9 +118,16 @@ async function lockRunner(
 ): Promise<{ name: string; release: () => Promise<void> }> {
   runner.locked = true
 
-  const healthy = await healthCheck(runner.name)
-  if (!healthy) {
-    await rebuildRunner(runner)
+  try {
+    const healthy = await healthCheck(runner.name)
+    if (!healthy) {
+      await rebuildRunner(runner)
+    }
+  } catch (err) {
+    runner.locked = false
+    const next = waitQueue.shift()
+    if (next) next(runner)
+    throw err
   }
 
   const release = async () => {
