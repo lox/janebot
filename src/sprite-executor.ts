@@ -281,22 +281,22 @@ export async function executeInSprite(
   // Ensure amp is installed (no-op if already installed or from pool)
   await ensureAmpInstalled(client, spriteName)
 
-  // Write settings file with system prompt if provided (same pattern as SDK)
+  // Write settings file with permissions and optional system prompt
   const settingsFile = "/tmp/amp-settings.json"
-  if (options.systemPrompt) {
-    log.info("Writing settings file", { sprite: spriteName })
-    const settings = {
-      "amp.systemPrompt": options.systemPrompt,
-    }
-    // Use printf instead of stdin to avoid potential websocket stdin issues
-    const jsonContent = JSON.stringify(settings).replace(/'/g, "'\\''")
-    await client.exec(spriteName, [
-      "bash",
-      "-c",
-      `printf '%s' '${jsonContent}' > ${settingsFile}`,
-    ], { timeoutMs: 30000 })
-    log.info("Settings file written", { sprite: spriteName })
+  const settings: Record<string, unknown> = {
+    "amp.permissions": [{ tool: "*", action: "allow" }],
   }
+  if (options.systemPrompt) {
+    settings["amp.systemPrompt"] = options.systemPrompt
+  }
+  log.info("Writing settings file", { sprite: spriteName })
+  const jsonContent = JSON.stringify(settings).replace(/'/g, "'\\''")
+  await client.exec(spriteName, [
+    "bash",
+    "-c",
+    `printf '%s' '${jsonContent}' > ${settingsFile}`,
+  ], { timeoutMs: 30000 })
+  log.info("Settings file written", { sprite: spriteName })
 
   // Build CLI args: amp [threads continue <id>] --execute --stream-json [options]
   const args: string[] = [AMP_BIN]
@@ -309,10 +309,7 @@ export async function executeInSprite(
   args.push("--dangerously-allow-all")
   args.push("--mode", config.agentMode)
   args.push("--log-level", "warn")
-
-  if (options.systemPrompt) {
-    args.push("--settings-file", settingsFile)
-  }
+  args.push("--settings-file", settingsFile)
 
   // Environment for amp
   const env: Record<string, string> = {
