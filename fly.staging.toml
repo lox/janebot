@@ -1,0 +1,15 @@
+app = 'janebot-staging'
+primary_region = 'syd'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  AGENT_MODE = 'smart'
+  NODE_ENV = 'production'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 512

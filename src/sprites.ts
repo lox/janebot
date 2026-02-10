@@ -214,9 +214,10 @@ export class SpritesClient {
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err))
         
-        // Only retry on transient 500 errors
-        const is500 = lastError.message.includes("500") || lastError.message.includes("Unexpected server response")
-        if (!is500 || attempt >= maxRetries) {
+        // Only retry on transient 500 errors (not 404 — sprite doesn't exist)
+        const isTransient = (lastError.message.includes("500") || lastError.message.includes("Unexpected server response"))
+          && !lastError.message.includes("404")
+        if (!isTransient || attempt >= maxRetries) {
           throw lastError
         }
 

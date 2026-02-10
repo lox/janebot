@@ -12,24 +12,16 @@ import {
 import { config, isUserAllowed, isChannelAllowed } from "./config.js"
 import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
+import * as log from "./logger.js"
+import { executeInSprite, type GeneratedFile } from "./sprite-executor.js"
+import { SpritesClient } from "./sprites.js"
+import { initRunners } from "./sprite-runners.js"
 
-/**
- * Clean up Slack message formatting.
- * - Converts broken local file links to inline code
- *   e.g. "</home/sprite/foo.py|foo.py>" → "`foo.py`"
- */
 function cleanSlackMessage(text: string): string {
-  // Match Slack links that are local file paths (not URLs)
-  // Format: <path|label> where path starts with / and doesn't have ://
   return text.replace(/<(\/[^|>]+)\|([^>]+)>/g, (_match, _path, label) => {
     return `\`${label}\``
   })
 }
-import * as log from "./logger.js"
-import * as sessions from "./sessions.js"
-import { executeInSprite, type GeneratedFile } from "./sprite-executor.js"
-import { SpritesClient } from "./sprites.js"
-import * as spritePool from "./sprite-pool.js"
 
 // Load SOUL.md for Jane's personality
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -93,17 +85,12 @@ async function getBotUserId(client: typeof app.client): Promise<string | undefin
   return cachedBotUserId
 }
 
-/**
- * Fetch Slack thread history as context for the LLM.
- * Supports incremental fetching via afterTs to avoid resending old context.
- * Filters out bot messages and messages that @mention the bot (already in Amp thread).
- */
 async function fetchThreadContext(
   client: typeof app.client,
   channel: string,
   threadTs: string,
   botUserId: string | undefined,
-  opts?: { afterTs?: string; beforeTs?: string }
+  beforeTs: string
 ): Promise<string | null> {
   try {
     const result = await client.conversations.replies({
@@ -116,21 +103,21 @@ async function fetchThreadContext(
       return null
     }
 
-    const botMentionPattern = botUserId ? new RegExp(`<@${botUserId}>`) : null
-
     const formatted = result.messages
       .filter((m) => {
-        if (m.user === botUserId) return false
-        if (opts?.afterTs && Number(m.ts) <= Number(opts.afterTs)) return false
-        if (opts?.beforeTs && Number(m.ts) >= Number(opts.beforeTs)) return false
-        if (botMentionPattern && m.text && botMentionPattern.test(m.text)) return false
+        if (Number(m.ts) >= Number(beforeTs)) return false
         return true
       })
       .map((m) => {
+        const isBot = m.user === botUserId || "bot_id" in m
+        const label = isBot ? "Jane" : m.user
         const text = m.text?.replace(/<@[A-Z0-9]+>/g, "").trim() || ""
-        return `[${m.user}]: ${text}`
+        return `[${label}]: ${text}`
       })
-      .filter((line) => line.includes(": ") && line.split(": ")[1])
+      .filter((line) => {
+        const afterColon = line.split(": ").slice(1).join(": ")
+        return afterColon.length > 0
+      })
       .join("\n")
 
     return formatted || null
@@ -234,19 +221,11 @@ const LOCAL_ENABLED_TOOLS = [
   // Excluded: find_thread, read_thread, handoff, task_list
 ]
 
-/**
- * Execute Amp inside a Sprite sandbox.
- * Amp CLI runs in the Sprite with full tool access.
- */
 async function runAmpInSprite(
   prompt: string,
-  userId: string,
-  channelId: string,
-  threadTs: string
+  userId: string
 ): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; spriteName: string }> {
   const result = await executeInSprite({
-    channelId,
-    threadTs,
     userId,
     prompt,
     systemPrompt: buildSystemPrompt(userId),
@@ -259,12 +238,8 @@ async function runAmpInSprite(
   }
 }
 
-/**
- * Execute Amp locally (for trusted single-user setups).
- */
 async function runAmpLocal(
   prompt: string,
-  existingThreadId: string | undefined,
   userId: string
 ): Promise<{ content: string; threadId: string | undefined }> {
   const messages = execute({
@@ -274,7 +249,6 @@ async function runAmpLocal(
       mode: config.agentMode,
       mcpConfig:
         Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
-      continue: existingThreadId ?? false,
       systemPrompt: buildSystemPrompt(userId),
       labels: [`slack-user-${userId}`],
       permissions: [{ tool: "*", action: "allow" }],
@@ -311,24 +285,16 @@ interface AmpExecutionResult {
   spriteName?: string
 }
 
-/**
- * Execute Amp with appropriate isolation based on configuration.
- */
 async function runAmp(
   prompt: string,
-  existingThreadId: string | undefined,
-  userId: string,
-  channelId: string,
-  threadTs: string
+  userId: string
 ): Promise<AmpExecutionResult> {
-  // Use Sprites sandbox if configured
   if (config.spritesToken) {
-    return runAmpInSprite(prompt, userId, channelId, threadTs)
+    return runAmpInSprite(prompt, userId)
   }
 
-  // Local execution requires explicit opt-in
   if (config.allowLocalExecution) {
-    return runAmpLocal(prompt, existingThreadId, userId)
+    return runAmpLocal(prompt, userId)
   }
 
   throw new Error(
@@ -390,54 +356,27 @@ app.event("app_mention", async ({ event, client, say }) => {
   try {
     inFlight.add(sessionKey)
 
-    // Wait for debounce to collect any rapid follow-up messages
     let prompt = await debounce(debounceKey, rawText)
 
-    const existingSession = sessions.get(channelId, slackThreadTs)
-
-    // Fetch Slack thread context for messages the bot hasn't seen
     const isInThread = event.thread_ts !== undefined
     if (isInThread) {
       const botUserId = await getBotUserId(client)
-      const history = await fetchThreadContext(
-        client,
-        channelId,
-        slackThreadTs,
-        botUserId,
-        {
-          afterTs: existingSession?.lastSlackContextTs,
-          beforeTs: event.ts,
-        }
-      )
+      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, event.ts)
       if (history) {
-        const label = existingSession?.lastSlackContextTs
-          ? "New messages in this Slack thread since last time"
-          : "Previous messages in this Slack thread"
-        prompt = `${label}:\n${history}\n\nLatest message: ${prompt}`
+        prompt = `Previous messages in this Slack thread:\n${history}\n\nLatest message: ${prompt}`
       }
     }
 
     log.request("mention", userId, channelId, prompt)
 
-    // Execute with Amp SDK (uses Sprites sandbox if configured)
-    const result = await runAmp(prompt, existingSession?.ampThreadId, userId, channelId, slackThreadTs)
+    const result = await runAmp(prompt, userId)
 
-    // Store thread mapping for future messages (handled by sprite-executor for Sprites mode)
-    if (result.threadId && config.allowLocalExecution && !config.spritesToken) {
-      sessions.set(channelId, slackThreadTs, result.threadId, userId)
-    }
-
-    // Advance the Slack context cursor
-    sessions.updateLastSlackContextTs(channelId, slackThreadTs, event.ts)
-
-    // Upload any generated files (images from painter tool, etc.)
     let uploadErrors: string[] = []
     if (result.generatedFiles?.length && result.spriteName) {
       uploadErrors = await uploadGeneratedFiles(client, result.spriteName, result.generatedFiles, channelId, slackThreadTs)
     }
 
-    // Send response (chunked if needed for Slack's 4000 char limit)
-    let content = result.content || "I completed the task but have no response to share."
+    let content = result.content || "Done."
     if (uploadErrors.length > 0) {
       content += `\n\n_Note: ${uploadErrors.join("; ")}_`
     }
@@ -446,7 +385,6 @@ app.event("app_mention", async ({ event, client, say }) => {
 
     log.response("mention", userId, Date.now() - startTime, true)
 
-    // Mark as complete
     await client.reactions
       .add({
         channel: channelId,
@@ -540,41 +478,18 @@ app.event("message", async ({ event, client, say }) => {
 
     let prompt = await debounce(debounceKey, rawText)
 
-    const existingSession = sessions.get(channelId, slackThreadTs)
-
-    // Fetch Slack thread context for messages the bot hasn't seen
     const isInThread = messageEvent.thread_ts !== undefined
     if (isInThread) {
       const botUserId = await getBotUserId(client)
-      const history = await fetchThreadContext(
-        client,
-        channelId,
-        slackThreadTs,
-        botUserId,
-        {
-          afterTs: existingSession?.lastSlackContextTs,
-          beforeTs: messageEvent.ts,
-        }
-      )
+      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, messageEvent.ts)
       if (history) {
-        const label = existingSession?.lastSlackContextTs
-          ? "New messages in this Slack thread since last time"
-          : "Previous messages in this Slack thread"
-        prompt = `${label}:\n${history}\n\nLatest message: ${prompt}`
+        prompt = `Previous messages in this Slack thread:\n${history}\n\nLatest message: ${prompt}`
       }
     }
 
     log.request("dm", userId, channelId, prompt)
 
-    const result = await runAmp(prompt, existingSession?.ampThreadId, userId, channelId, slackThreadTs)
-
-    // Store thread mapping for future messages (handled by sprite-executor for Sprites mode)
-    if (result.threadId && config.allowLocalExecution && !config.spritesToken) {
-      sessions.set(channelId, slackThreadTs, result.threadId, userId)
-    }
-
-    // Advance the Slack context cursor
-    sessions.updateLastSlackContextTs(channelId, slackThreadTs, messageEvent.ts)
+    const result = await runAmp(prompt, userId)
 
     // Upload any generated files (images from painter tool, etc.)
     let uploadErrors: string[] = []
@@ -672,7 +587,6 @@ async function sendChunkedResponse(
 
 // Start the app
 async function main() {
-  // Validate execution environment is configured
   if (!config.spritesToken && !config.allowLocalExecution) {
     throw new Error(
       "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
@@ -680,10 +594,12 @@ async function main() {
     )
   }
 
-  // Load persistent sessions
-  sessions.load()
+  // Initialize sprite runners before accepting messages
+  if (config.spritesToken) {
+    const client = new SpritesClient(config.spritesToken)
+    await initRunners(client, 2)
+  }
 
-  // Start Slack first so we can accept messages immediately
   await app.start()
 
   const executionMode = config.spritesToken ? "sprites" : "local (UNSANDBOXED)"
@@ -694,12 +610,6 @@ async function main() {
     hasSoul: !!soulPrompt,
     execution: executionMode,
   })
-
-  // Initialize sprite pool in background (don't block startup)
-  if (config.spritesToken) {
-    const client = new SpritesClient(config.spritesToken)
-    spritePool.initPool(client, 2).catch((e) => log.error("Pool init failed", e))
-  }
 }
 
 main().catch((err) => log.error("Startup failed", err))
