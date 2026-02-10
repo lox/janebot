@@ -9,14 +9,14 @@ importers:
   .:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.25.3
-        version: 1.25.3(hono@4.11.7)(zod@3.25.76)
+        specifier: ^1.26.0
+        version: 1.26.0(zod@3.25.76)
       '@slack/bolt':
         specifier: ^4.1.0
         version: 4.6.0(@types/express@5.0.6)
       '@sourcegraph/amp-sdk':
         specifier: latest
-        version: 0.1.0-20260201005254-g9e2e086
+        version: 0.1.0-20260210005255-gbd45919
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
@@ -204,8 +204,8 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@modelcontextprotocol/sdk@1.25.3':
-    resolution: {integrity: sha512-vsAMBMERybvYgKbg/l4L1rhS7VXV1c0CtyJg72vwxONVX0l4ZfKVAnZEWTQixJGTzKnELjQ59e4NbdFDALRiAQ==}
+  '@modelcontextprotocol/sdk@1.26.0':
+    resolution: {integrity: sha512-Y5RmPncpiDtTXDbLKswIJzTqu2hyBKxTNsgKqKclDbhIgg1wgtf1fRuvxgTnRfcnxtvvgbIEcqUOzZrJ6iSReg==}
     engines: {node: '>=18'}
     peerDependencies:
       '@cfworker/json-schema': ^4.1.1
@@ -243,35 +243,30 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/keyring-linux-arm64-musl@1.1.9':
     resolution: {integrity: sha512-82EcuzoV/+Dxwi1HHhrEEprN5Ou7OsRKyTJSaRqiVuGvLaQDUhZX/4zXTTh4Pz24m22Q4aoJogafS31w8iKGGw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/keyring-linux-riscv64-gnu@1.1.9':
     resolution: {integrity: sha512-Q1ar7DszC1X8FW6w7Ql7b72GFeAUxkTiOuxXChCFBy7eWCQSDrr52ZLroIowp82RmkQLZebnK+IwSssD2Ntoag==}
     engines: {node: '>= 10'}
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/keyring-linux-x64-gnu@1.1.9':
     resolution: {integrity: sha512-LMvrYt1ho3pEDECssA7ATbcMDgayEUwwSD+UfrC7Hj1+C6dlvipwt5njwUDCno2OeXbjjisCo4CR9fDmXa4sZA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/keyring-linux-x64-musl@1.1.9':
     resolution: {integrity: sha512-x2i/TgS2/fM+6LRj1MrtVC580sepz5GcxbSCXpttx2H58uZKBF0vVM9HDPHoKP2w5++fyrA17eltJNYN3Ob46A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/keyring-win32-arm64-msvc@1.1.9':
     resolution: {integrity: sha512-14t6p8CTBNfGzLO5LXqurT+pAOf/ocGjOM/qiG/LW+jPkhyJYBNI9e3HKq3QX+ObbnxVpt4fAY02b4XLt7EWig==}
@@ -321,12 +316,12 @@ packages:
     resolution: {integrity: sha512-ERcExbWrnkDN8ovoWWe6Wgt/usanj1dWUd18dJLpctUI4mlPS0nKt81Joh8VI+OPbNnY1lIilVt9gdMBD9U2ig==}
     engines: {node: '>= 18', npm: '>= 8.6.0'}
 
-  '@sourcegraph/amp-sdk@0.1.0-20260201005254-g9e2e086':
-    resolution: {integrity: sha512-3Y3fDjdfRqxUCf9DJTeammlJBn0i+nupgLx86MIWDePI4Qumy62L4yqdYJPWKfVOWQxKRfPivUey5xYvzcpFNA==}
+  '@sourcegraph/amp-sdk@0.1.0-20260210005255-gbd45919':
+    resolution: {integrity: sha512-BNzc+yjWI5GiX6evD2X2J29niKwu7ci7XMUBsPDAPXmI46QKiBxOreTa5+Zpfb0+Wxfsy211pMcq0p9KTFxASg==}
     engines: {node: '>=18'}
 
-  '@sourcegraph/amp@0.0.1769920891-g4da868':
-    resolution: {integrity: sha512-BlwRH6h0tJifhCEc53FRpFgipOlgA1DpXboBIttywAGclky5ZpnS2yhRzjbrRC+RoissOKOmzV9YVork22t4qw==}
+  '@sourcegraph/amp@0.0.1770682056-gad6470':
+    resolution: {integrity: sha512-x7N/xii35hofw5qzdd+Y6Rz6v4NZCk4Oe/FC0hC3tsBuPzQ4cRPSNCXgVmPUxskCMWhgRalOwyVe63w+FiM2Hg==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -350,6 +345,9 @@ packages:
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
+
+  '@types/node@22.19.10':
+    resolution: {integrity: sha512-tF5VOugLS/EuDlTBijk0MqABfP8UxgYazTLo3uIn3b4yJgg26QRbVYJYsDtHrjdDUIRfP70+VfhTTc+CE1yskw==}
 
   '@types/node@22.19.7':
     resolution: {integrity: sha512-MciR4AKGHWl7xwxkBa6xUGxQJ4VBOmPTF7sL+iGzuahOFaO0jHCsuEfS80pan1ef4gWId1oWOweIhrDEYLuaOw==}
@@ -517,8 +515,8 @@ packages:
     resolution: {integrity: sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==}
     engines: {node: '>=18.0.0'}
 
-  express-rate-limit@7.5.1:
-    resolution: {integrity: sha512-7iN8iPMDzOMHPUYllBEsQdWVB6fPDMPqwjBaFrgr4Jgr/+okjvzAy+UHlYYL/Vs0OsOrMkwS6PJDkFlJwoxUnw==}
+  express-rate-limit@8.2.1:
+    resolution: {integrity: sha512-PCZEIEIxqwhzw4KF0n7QF4QqruVTcF73O5kFKUnGOyjbCCgizBBiFaYpd/fnBLUMPw/BWw9OsiN7GgrNYr7j6g==}
     engines: {node: '>= 16'}
     peerDependencies:
       express: '>= 4.11'
@@ -593,8 +591,8 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
-  hono@4.11.7:
-    resolution: {integrity: sha512-l7qMiNee7t82bH3SeyUCt9UF15EVmaBvsppY2zQtrbIhl/yzBTny+YUxsVjSjQ6gaqaeVtZmGocom8TzBlA4Yw==}
+  hono@4.11.9:
+    resolution: {integrity: sha512-Eaw2YTGM6WOxA6CXbckaEvslr2Ne4NFsKrvc0v97JD5awbmeBLO5w9Ho9L9kmKonrwF9RJlW6BxT1PVv/agBHQ==}
     engines: {node: '>=16.9.0'}
 
   http-errors@2.0.1:
@@ -607,6 +605,10 @@ packages:
 
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
+
+  ip-address@10.0.1:
+    resolution: {integrity: sha512-NWv9YLW4PoW2B7xtzaS3NCot75m6nK7Icdv0o3lfMceJVRfSoQwqD4wEH5rLwoKJwUiZ/rfpiVBhnaF0FK4HoA==}
+    engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
@@ -980,13 +982,13 @@ snapshots:
   '@esbuild/win32-x64@0.27.2':
     optional: true
 
-  '@hono/node-server@1.19.9(hono@4.11.7)':
+  '@hono/node-server@1.19.9(hono@4.11.9)':
     dependencies:
-      hono: 4.11.7
+      hono: 4.11.9
 
-  '@modelcontextprotocol/sdk@1.25.3(hono@4.11.7)(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.26.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.9(hono@4.11.7)
+      '@hono/node-server': 1.19.9(hono@4.11.9)
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)
       content-type: 1.0.5
@@ -995,7 +997,8 @@ snapshots:
       eventsource: 3.0.7
       eventsource-parser: 3.0.6
       express: 5.2.1
-      express-rate-limit: 7.5.1(express@5.2.1)
+      express-rate-limit: 8.2.1(express@5.2.1)
+      hono: 4.11.9
       jose: 6.1.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -1003,7 +1006,6 @@ snapshots:
       zod: 3.25.76
       zod-to-json-schema: 3.25.1(zod@3.25.76)
     transitivePeerDependencies:
-      - hono
       - supports-color
 
   '@napi-rs/keyring-darwin-arm64@1.1.9':
@@ -1122,27 +1124,27 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  '@sourcegraph/amp-sdk@0.1.0-20260201005254-g9e2e086':
+  '@sourcegraph/amp-sdk@0.1.0-20260210005255-gbd45919':
     dependencies:
-      '@sourcegraph/amp': 0.0.1769920891-g4da868
+      '@sourcegraph/amp': 0.0.1770682056-gad6470
       zod: 3.25.76
 
-  '@sourcegraph/amp@0.0.1769920891-g4da868':
+  '@sourcegraph/amp@0.0.1770682056-gad6470':
     dependencies:
       '@napi-rs/keyring': 1.1.9
 
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 22.19.7
+      '@types/node': 22.19.10
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 22.19.7
+      '@types/node': 22.19.10
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 22.19.7
+      '@types/node': 22.19.10
       '@types/qs': 6.14.0
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -1162,6 +1164,10 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
+  '@types/node@22.19.10':
+    dependencies:
+      undici-types: 6.21.0
+
   '@types/node@22.19.7':
     dependencies:
       undici-types: 6.21.0
@@ -1174,12 +1180,12 @@ snapshots:
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 22.19.7
+      '@types/node': 22.19.10
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 22.19.7
+      '@types/node': 22.19.10
 
   '@types/ws@8.18.1':
     dependencies:
@@ -1344,9 +1350,10 @@ snapshots:
     dependencies:
       eventsource-parser: 3.0.6
 
-  express-rate-limit@7.5.1(express@5.2.1):
+  express-rate-limit@8.2.1(express@5.2.1):
     dependencies:
       express: 5.2.1
+      ip-address: 10.0.1
 
   express@5.2.1:
     dependencies:
@@ -1449,7 +1456,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.11.7: {}
+  hono@4.11.9: {}
 
   http-errors@2.0.1:
     dependencies:
@@ -1464,6 +1471,8 @@ snapshots:
       safer-buffer: 2.1.2
 
   inherits@2.0.4: {}
+
+  ip-address@10.0.1: {}
 
   ipaddr.js@1.9.1: {}
 

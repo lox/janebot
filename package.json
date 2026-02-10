@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.3",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@slack/bolt": "^4.1.0",
     "@sourcegraph/amp-sdk": "latest",
     "dotenv": "^16.4.5",
