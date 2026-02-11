@@ -51,10 +51,11 @@ const LOCAL_ENABLED_TOOLS = [
 ]
 
 function buildLabels(): string[] {
+  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9-]/g, "-")
   return [
-    `slack-user:${FAKE_USER_ID}`,
-    `slack-channel:${FAKE_CHANNEL_ID}`,
-    `slack-thread:${threadTs}`,
+    `slack-user-${sanitize(FAKE_USER_ID)}`,
+    `slack-channel-${sanitize(FAKE_CHANNEL_ID)}`,
+    `slack-thread-${sanitize(threadTs)}`,
   ]
 }
 

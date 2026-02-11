@@ -16,7 +16,7 @@ importers:
         version: 4.6.0(@types/express@5.0.6)
       '@sourcegraph/amp-sdk':
         specifier: latest
-        version: 0.1.0-20260210005255-gbd45919
+        version: 0.1.0-20260211082312-gd38a549
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
@@ -243,30 +243,35 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@napi-rs/keyring-linux-arm64-musl@1.1.9':
     resolution: {integrity: sha512-82EcuzoV/+Dxwi1HHhrEEprN5Ou7OsRKyTJSaRqiVuGvLaQDUhZX/4zXTTh4Pz24m22Q4aoJogafS31w8iKGGw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@napi-rs/keyring-linux-riscv64-gnu@1.1.9':
     resolution: {integrity: sha512-Q1ar7DszC1X8FW6w7Ql7b72GFeAUxkTiOuxXChCFBy7eWCQSDrr52ZLroIowp82RmkQLZebnK+IwSssD2Ntoag==}
     engines: {node: '>= 10'}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@napi-rs/keyring-linux-x64-gnu@1.1.9':
     resolution: {integrity: sha512-LMvrYt1ho3pEDECssA7ATbcMDgayEUwwSD+UfrC7Hj1+C6dlvipwt5njwUDCno2OeXbjjisCo4CR9fDmXa4sZA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@napi-rs/keyring-linux-x64-musl@1.1.9':
     resolution: {integrity: sha512-x2i/TgS2/fM+6LRj1MrtVC580sepz5GcxbSCXpttx2H58uZKBF0vVM9HDPHoKP2w5++fyrA17eltJNYN3Ob46A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@napi-rs/keyring-win32-arm64-msvc@1.1.9':
     resolution: {integrity: sha512-14t6p8CTBNfGzLO5LXqurT+pAOf/ocGjOM/qiG/LW+jPkhyJYBNI9e3HKq3QX+ObbnxVpt4fAY02b4XLt7EWig==}
@@ -316,12 +321,12 @@ packages:
     resolution: {integrity: sha512-ERcExbWrnkDN8ovoWWe6Wgt/usanj1dWUd18dJLpctUI4mlPS0nKt81Joh8VI+OPbNnY1lIilVt9gdMBD9U2ig==}
     engines: {node: '>= 18', npm: '>= 8.6.0'}
 
-  '@sourcegraph/amp-sdk@0.1.0-20260210005255-gbd45919':
-    resolution: {integrity: sha512-BNzc+yjWI5GiX6evD2X2J29niKwu7ci7XMUBsPDAPXmI46QKiBxOreTa5+Zpfb0+Wxfsy211pMcq0p9KTFxASg==}
+  '@sourcegraph/amp-sdk@0.1.0-20260211082312-gd38a549':
+    resolution: {integrity: sha512-9DnPJJNYXb13936+RJDPKlmCnDB8ZoCa8/BeXySfzN/ZtsHrkr/iTRE4jTHXqHMnKa2eZ+Rd2jMAihE3qIXutA==}
     engines: {node: '>=18'}
 
-  '@sourcegraph/amp@0.0.1770682056-gad6470':
-    resolution: {integrity: sha512-x7N/xii35hofw5qzdd+Y6Rz6v4NZCk4Oe/FC0hC3tsBuPzQ4cRPSNCXgVmPUxskCMWhgRalOwyVe63w+FiM2Hg==}
+  '@sourcegraph/amp@0.0.1770784921-gc1ce14':
+    resolution: {integrity: sha512-1cu9Qqgq8/eYD6VQyHulnk5Qc6ZAkvIkZfN7ynBkcTFe9AHYv6hLlOBoC6O1JHtQXNW5B+cmlLIA9XaYiRPCiw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -346,8 +351,8 @@ packages:
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
-  '@types/node@22.19.10':
-    resolution: {integrity: sha512-tF5VOugLS/EuDlTBijk0MqABfP8UxgYazTLo3uIn3b4yJgg26QRbVYJYsDtHrjdDUIRfP70+VfhTTc+CE1yskw==}
+  '@types/node@22.19.11':
+    resolution: {integrity: sha512-BH7YwL6rA93ReqeQS1c4bsPpcfOmJasG+Fkr6Y59q83f9M1WcBRHR2vM+P9eOisYRcN3ujQoiZY8uk5W+1WL8w==}
 
   '@types/node@22.19.7':
     resolution: {integrity: sha512-MciR4AKGHWl7xwxkBa6xUGxQJ4VBOmPTF7sL+iGzuahOFaO0jHCsuEfS80pan1ef4gWId1oWOweIhrDEYLuaOw==}
@@ -1124,27 +1129,27 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  '@sourcegraph/amp-sdk@0.1.0-20260210005255-gbd45919':
+  '@sourcegraph/amp-sdk@0.1.0-20260211082312-gd38a549':
     dependencies:
-      '@sourcegraph/amp': 0.0.1770682056-gad6470
+      '@sourcegraph/amp': 0.0.1770784921-gc1ce14
       zod: 3.25.76
 
-  '@sourcegraph/amp@0.0.1770682056-gad6470':
+  '@sourcegraph/amp@0.0.1770784921-gc1ce14':
     dependencies:
       '@napi-rs/keyring': 1.1.9
 
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 22.19.10
+      '@types/node': 22.19.11
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 22.19.10
+      '@types/node': 22.19.11
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 22.19.10
+      '@types/node': 22.19.11
       '@types/qs': 6.14.0
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -1164,7 +1169,7 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
-  '@types/node@22.19.10':
+  '@types/node@22.19.11':
     dependencies:
       undici-types: 6.21.0
 
@@ -1180,12 +1185,12 @@ snapshots:
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 22.19.10
+      '@types/node': 22.19.11
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 22.19.10
+      '@types/node': 22.19.11
 
   '@types/ws@8.18.1':
     dependencies:

@@ -275,10 +275,11 @@ async function runAmp(
   userId: string,
   slackContext: { channel: string; threadTs: string }
 ): Promise<AmpExecutionResult> {
+  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9-]/g, "-")
   const labels = [
-    `slack-user:${userId}`,
-    `slack-channel:${slackContext.channel}`,
-    `slack-thread:${slackContext.threadTs}`,
+    `slack-user-${sanitize(userId)}`,
+    `slack-channel-${sanitize(slackContext.channel)}`,
+    `slack-thread-${sanitize(slackContext.threadTs)}`,
   ]
   const execute = () => {
     if (config.spritesToken) {
