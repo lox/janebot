@@ -22,7 +22,7 @@ steps:
 
   - label: ":fly: Deploy Staging"
     if: build.pull_request.id != null
-    command: flyctl deploy --config fly.staging.toml --remote-only
+    command: mise exec -- flyctl deploy --config fly.staging.toml --remote-only
     secrets:
       - FLY_API_TOKEN_STAGING
 
@@ -30,6 +30,6 @@ steps:
 
   - label: ":fly: Deploy Production"
     branches: main
-    command: flyctl deploy --config fly.toml --remote-only
+    command: mise exec -- flyctl deploy --config fly.toml --remote-only
     secrets:
       - FLY_API_TOKEN_PRODUCTION
