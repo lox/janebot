@@ -403,11 +403,7 @@ app.event("app_mention", async ({ event, client, say }) => {
     })
 
     await client.reactions
-      .add({
-        channel: channelId,
-        timestamp: event.ts,
-        name: "x",
-      })
+      .add({ channel: channelId, timestamp: event.ts, name: "x" })
       .catch(() => {})
   } finally {
     inFlight.delete(sessionKey)
@@ -524,11 +520,7 @@ app.event("message", async ({ event, client, say }) => {
     })
 
     await client.reactions
-      .add({
-        channel: channelId,
-        timestamp: messageEvent.ts,
-        name: "x",
-      })
+      .add({ channel: channelId, timestamp: messageEvent.ts, name: "x" })
       .catch(() => {})
   } finally {
     inFlight.delete(sessionKey)
@@ -594,13 +586,13 @@ async function main() {
     )
   }
 
-  // Initialize sprite runners before accepting messages
-  if (config.spritesToken) {
-    const client = new SpritesClient(config.spritesToken)
-    await initRunners(client, 2)
-  }
-
   await app.start()
+
+  // Initialize sprite runners in background (non-blocking)
+  if (config.spritesToken) {
+    const spritesClient = new SpritesClient(config.spritesToken)
+    initRunners(spritesClient, 2)
+  }
 
   const executionMode = config.spritesToken ? "sprites" : "local (UNSANDBOXED)"
   log.startup({
