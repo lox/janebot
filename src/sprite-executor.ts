@@ -27,6 +27,7 @@ export interface SpriteExecutorOptions {
   prompt: string
   systemPrompt?: string
   userId: string
+  labels?: string[]
 }
 
 export interface GeneratedFile {
@@ -188,6 +189,12 @@ export async function executeInSprite(
       "--log-level", "warn",
       "--settings-file", settingsFile,
     ]
+
+    if (options.labels) {
+      for (const label of options.labels) {
+        args.push("--label", label)
+      }
+    }
 
     const env: Record<string, string> = {
       PATH: `/home/sprite/.amp/bin:/home/sprite/.local/bin:/usr/local/bin:/usr/bin:/bin`,
