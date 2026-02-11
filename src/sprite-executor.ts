@@ -202,7 +202,12 @@ export async function executeInSprite(
     }
     env.AMP_API_KEY = ampApiKey
 
-    const githubToken = await getGitHubToken()
+    let githubToken: string | undefined
+    try {
+      githubToken = await getGitHubToken()
+    } catch (err) {
+      log.warn("Failed to mint GitHub token, continuing without GitHub access", { error: err })
+    }
     if (githubToken) {
       env.GH_TOKEN = githubToken
       await spritesClient.exec(spriteName, [
