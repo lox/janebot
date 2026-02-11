@@ -26,41 +26,67 @@ const CLEAN_CHECKPOINT = "clean-v2"
 interface Runner {
   name: string
   locked: boolean
+  ready: boolean
+  checkpointId: string | undefined
 }
+
+const INIT_RETRY_BASE_MS = 5000
+const INIT_RETRY_MAX_MS = 120000
 
 let client: SpritesClient
 const runners: Runner[] = []
 const waitQueue: Array<(runner: Runner) => void> = []
 
-export async function initRunners(
+export function initRunners(
   spritesClient: SpritesClient,
   count = 2
-): Promise<void> {
+): void {
   client = spritesClient
-  log.info("Initializing sprite runners", { count })
+  log.info("Initializing sprite runners in background", { count })
 
-  const initPromises: Promise<void>[] = []
   for (let i = 0; i < count; i++) {
-    initPromises.push(initRunner(i))
+    const name = `${RUNNER_PREFIX}${i}`
+    const runner: Runner = { name, locked: false, ready: false, checkpointId: undefined }
+    runners.push(runner)
+    initRunnerWithRetry(runner)
   }
-  await Promise.all(initPromises)
-
-  log.info("Sprite runners ready", getRunnerStats())
 }
 
-async function initRunner(index: number): Promise<void> {
-  const name = `${RUNNER_PREFIX}${index}`
-  const runner: Runner = { name, locked: false }
-  runners.push(runner)
+async function initRunnerWithRetry(runner: Runner): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await initRunner(runner)
+      runner.ready = true
+      log.info("Runner initialized", { name: runner.name, ...getRunnerStats() })
+
+      const next = waitQueue.shift()
+      if (next) next(runner)
+      return
+    } catch (err) {
+      const delayMs = Math.min(INIT_RETRY_BASE_MS * Math.pow(2, attempt - 1), INIT_RETRY_MAX_MS)
+      log.warn("Runner init failed, retrying", {
+        name: runner.name,
+        attempt,
+        delayMs,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+}
+
+async function initRunner(runner: Runner): Promise<void> {
+  const name = runner.name
 
   const existing = await client.get(name)
   if (existing) {
     const checkpoints = await client.listCheckpoints(name)
-    const hasClean = checkpoints.some((c) => c.comment === CLEAN_CHECKPOINT)
-    if (hasClean) {
-      log.info("Runner already set up with checkpoint", { name })
+    const cleanCheckpoint = checkpoints.find((c) => c.comment === CLEAN_CHECKPOINT)
+    if (cleanCheckpoint) {
+      log.info("Runner already set up with checkpoint", { name, checkpointId: cleanCheckpoint.id })
       try {
-        await client.restoreCheckpoint(name, CLEAN_CHECKPOINT)
+        await client.restoreCheckpoint(name, cleanCheckpoint.id)
+        runner.checkpointId = cleanCheckpoint.id
         return
       } catch (err) {
         log.warn("Checkpoint restore failed, will rebuild", { name, error: err })
@@ -71,10 +97,10 @@ async function initRunner(index: number): Promise<void> {
     await client.delete(name)
   }
 
-  await buildRunner(name)
+  runner.checkpointId = await buildRunner(name)
 }
 
-async function buildRunner(name: string): Promise<void> {
+async function buildRunner(name: string): Promise<string> {
   log.info("Building runner", { name })
   await client.create(name)
 
@@ -101,8 +127,9 @@ async function buildRunner(name: string): Promise<void> {
   log.info("Runner gh installed", { name, version: ghVer.stdout.split("\n")[0]?.trim() })
 
   await client.setNetworkPolicy(name, NETWORK_POLICY)
-  await client.createCheckpoint(name, CLEAN_CHECKPOINT)
-  log.info("Runner ready", { name })
+  const checkpointId = await client.createCheckpoint(name, CLEAN_CHECKPOINT)
+  log.info("Runner ready", { name, checkpointId })
+  return checkpointId
 }
 
 async function rebuildRunner(runner: Runner): Promise<void> {
@@ -112,7 +139,7 @@ async function rebuildRunner(runner: Runner): Promise<void> {
   } catch {
     // may already be gone
   }
-  await buildRunner(runner.name)
+  runner.checkpointId = await buildRunner(runner.name)
 }
 
 async function healthCheck(name: string): Promise<boolean> {
@@ -125,10 +152,14 @@ async function healthCheck(name: string): Promise<boolean> {
 }
 
 export async function acquireRunner(): Promise<{ name: string; release: () => Promise<void> }> {
-  const runner = runners.find((r) => !r.locked)
+  const runner = runners.find((r) => r.ready && !r.locked)
 
   if (runner) {
     return lockRunner(runner)
+  }
+
+  if (!runners.some((r) => r.ready)) {
+    throw new Error("No runners available yet — still warming up")
   }
 
   return new Promise((resolve) => {
@@ -157,7 +188,7 @@ async function lockRunner(
 
   const release = async () => {
     try {
-      await client.restoreCheckpoint(runner.name, CLEAN_CHECKPOINT)
+      await client.restoreCheckpoint(runner.name, runner.checkpointId!)
     } catch (err) {
       log.error("Failed to restore checkpoint, rebuilding", err)
       await rebuildRunner(runner)
@@ -173,9 +204,10 @@ async function lockRunner(
   return { name: runner.name, release }
 }
 
-export function getRunnerStats(): { total: number; available: number } {
+export function getRunnerStats(): { total: number; ready: number; available: number } {
   return {
     total: runners.length,
-    available: runners.filter((r) => !r.locked).length,
+    ready: runners.filter((r) => r.ready).length,
+    available: runners.filter((r) => r.ready && !r.locked).length,
   }
 }
