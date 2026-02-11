@@ -20,19 +20,16 @@ import {
 } from "@sourcegraph/amp-sdk"
 import { config } from "../src/config.js"
 import { executeInSprite, type GeneratedFile } from "../src/sprite-executor.js"
-import * as sessions from "../src/sessions.js"
 import { SpritesClient } from "../src/sprites.js"
-import * as spritePool from "../src/sprite-pool.js"
+import { initRunners } from "../src/sprite-runners.js"
 
-// Fake user/channel IDs for the session
 const FAKE_USER_ID = "U_REPL_USER"
 const FAKE_CHANNEL_ID = "D_REPL"
 let threadTs = Date.now().toString()
 
-// Track conversation
 let messageCount = 0
+let lastAmpThreadId: string | undefined
 
-// Tools enabled for local execution
 const LOCAL_ENABLED_TOOLS = [
   "Bash",
   "create_file",
@@ -52,6 +49,14 @@ const LOCAL_ENABLED_TOOLS = [
   "web_search",
   "painter",
 ]
+
+function buildLabels(): string[] {
+  return [
+    `slack-user:${FAKE_USER_ID}`,
+    `slack-channel:${FAKE_CHANNEL_ID}`,
+    `slack-thread:${threadTs}`,
+  ]
+}
 
 function buildSystemPrompt(userId: string): string {
   return `
@@ -77,7 +82,7 @@ async function runAmpLocal(
         Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
       continue: existingThreadId ?? false,
       systemPrompt: buildSystemPrompt(FAKE_USER_ID),
-      labels: [`repl-${FAKE_USER_ID}`],
+      labels: buildLabels(),
       permissions: [{ tool: "*", action: "allow" }],
       enabledTools: LOCAL_ENABLED_TOOLS,
       logLevel: "warn",
@@ -109,11 +114,10 @@ async function runAmpInSprite(
   prompt: string
 ): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; spriteName: string }> {
   const result = await executeInSprite({
-    channelId: FAKE_CHANNEL_ID,
-    threadTs: threadTs,
     userId: FAKE_USER_ID,
     prompt,
     systemPrompt: buildSystemPrompt(FAKE_USER_ID),
+    labels: buildLabels(),
   })
   return {
     content: result.content,
@@ -130,26 +134,26 @@ async function handleMessage(input: string, forceLocal: boolean, quiet = false):
   try {
     let result: { content: string; threadId: string | undefined; generatedFiles?: GeneratedFile[]; spriteName?: string }
 
-    // Get existing session
-    const existingSession = sessions.get(FAKE_CHANNEL_ID, threadTs)
-
     if (config.spritesToken && !forceLocal) {
       if (!quiet) console.log("\x1b[90m  [Using Sprite sandbox...]\x1b[0m")
       result = await runAmpInSprite(input)
     } else {
       if (!quiet) console.log("\x1b[90m  [Using local execution...]\x1b[0m")
-      result = await runAmpLocal(input, existingSession?.ampThreadId)
+      result = await runAmpLocal(input, lastAmpThreadId)
+    }
 
-      // Store session for local mode
-      if (result.threadId) {
-        sessions.set(FAKE_CHANNEL_ID, threadTs, result.threadId, FAKE_USER_ID)
-      }
+    if (result.threadId) {
+      lastAmpThreadId = result.threadId
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
-    if (!quiet) console.log(`\x1b[90m  [Completed in ${duration}s]\x1b[0m`)
+    if (!quiet) {
+      console.log(`\x1b[90m  [Completed in ${duration}s]\x1b[0m`)
+      if (result.threadId) {
+        console.log(`\x1b[90m  [Amp Thread: ${result.threadId}]\x1b[0m`)
+      }
+    }
 
-    // Show generated files info
     if (result.generatedFiles && result.generatedFiles.length > 0) {
       console.log(`\x1b[90m  [Generated ${result.generatedFiles.length} file(s):]\x1b[0m`)
       for (const file of result.generatedFiles) {
@@ -160,19 +164,17 @@ async function handleMessage(input: string, forceLocal: boolean, quiet = false):
     return result.content
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return `❌ Error: ${message}`
+    return `Error: ${message}`
   }
 }
 
 function parseArgs(): {
   forceLocal: boolean
   executePrompt: string | null
-  threadId: string | null
 } {
   const args = process.argv.slice(2)
   let forceLocal = false
   let executePrompt: string | null = null
-  let threadId: string | null = null
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -181,21 +183,13 @@ function parseArgs(): {
     } else if (arg === "-x" && i + 1 < args.length) {
       executePrompt = args[i + 1]
       i++
-    } else if (arg === "-t" && i + 1 < args.length) {
-      threadId = args[i + 1]
-      i++
     }
   }
 
-  return { forceLocal, executePrompt, threadId }
+  return { forceLocal, executePrompt }
 }
 
-async function runOnce(
-  prompt: string,
-  forceLocal: boolean,
-  specifiedThreadId: string | null
-): Promise<void> {
-  // Check env first
+async function runOnce(prompt: string, forceLocal: boolean): Promise<void> {
   if (!process.env.AMP_API_KEY) {
     console.error("ERROR: AMP_API_KEY is required")
     process.exit(1)
@@ -206,32 +200,20 @@ async function runOnce(
     process.exit(1)
   }
 
-  // Use specified thread ID or generate new one
-  if (specifiedThreadId) {
-    threadTs = specifiedThreadId
-  }
-
-  // Load sessions
-  sessions.load()
-
-  // Initialize sprite pool if using sprites
   if (config.spritesToken && !forceLocal) {
     const client = new SpritesClient(config.spritesToken)
-    await spritePool.initPool(client, 1) // Keep 1 warm sprite for REPL
+    await initRunners(client, 1)
   }
 
   const mode = config.spritesToken && !forceLocal ? "sprite" : "local"
   console.log(`\x1b[90m[Executing in ${mode} mode...]\x1b[0m`)
-  console.log(`\x1b[90m[Thread: ${threadTs}]\x1b[0m`)
+  console.log(`\x1b[90m[Labels: ${buildLabels().join(", ")}]\x1b[0m`)
   console.log(`\x1b[90m[Prompt: ${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}]\x1b[0m\n`)
 
   const response = await handleMessage(prompt, forceLocal, false)
 
   console.log()
   console.log(response)
-
-  // Output thread ID for subsequent calls
-  console.log(`\n\x1b[90m[Thread ID for -t flag: ${threadTs}]\x1b[0m`)
 }
 
 async function runInteractive(forceLocal: boolean): Promise<void> {
@@ -239,10 +221,9 @@ async function runInteractive(forceLocal: boolean): Promise<void> {
   console.log("Interactive testing mode")
   console.log()
 
-  // Check required env vars
   console.log("Environment check:")
-  console.log(`  AMP_API_KEY: ${process.env.AMP_API_KEY ? "✓ set" : "✗ NOT SET"}`)
-  console.log(`  SPRITES_TOKEN: ${process.env.SPRITES_TOKEN ? "✓ set" : "✗ not set"}`)
+  console.log(`  AMP_API_KEY: ${process.env.AMP_API_KEY ? "set" : "NOT SET"}`)
+  console.log(`  SPRITES_TOKEN: ${process.env.SPRITES_TOKEN ? "set" : "not set"}`)
   console.log(`  ALLOW_LOCAL_EXECUTION: ${process.env.ALLOW_LOCAL_EXECUTION || "not set"}`)
   console.log()
 
@@ -259,20 +240,21 @@ async function runInteractive(forceLocal: boolean): Promise<void> {
   if (forceLocal) {
     console.log("\x1b[33m--local flag: Forcing local execution\x1b[0m\n")
   } else if (config.spritesToken) {
-    console.log(`\x1b[32mUsing Sprites sandbox\x1b[0m`)
-    console.log(`Thread: ${FAKE_CHANNEL_ID}:${threadTs}\n`)
+    console.log(`\x1b[32mUsing Sprites sandbox\x1b[0m\n`)
+
+    const client = new SpritesClient(config.spritesToken)
+    await initRunners(client, 1)
   } else {
     console.log("\x1b[32mUsing local execution\x1b[0m\n")
   }
 
+  console.log(`Labels: ${buildLabels().join(", ")}`)
+  console.log()
   console.log("Type your messages below. Commands:")
   console.log("  /quit or /exit  - Exit")
   console.log("  /clear          - Start fresh thread")
   console.log("  /status         - Show current session info")
   console.log()
-
-  // Load sessions
-  sessions.load()
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -288,7 +270,6 @@ async function runInteractive(forceLocal: boolean): Promise<void> {
         return
       }
 
-      // Handle commands
       if (trimmed === "/quit" || trimmed === "/exit") {
         console.log("\nGoodbye!")
         rl.close()
@@ -298,29 +279,27 @@ async function runInteractive(forceLocal: boolean): Promise<void> {
       if (trimmed === "/clear") {
         threadTs = Date.now().toString()
         messageCount = 0
-        console.log(`\x1b[90m  [Thread cleared. New thread: ${threadTs}]\x1b[0m\n`)
+        lastAmpThreadId = undefined
+        console.log(`\x1b[90m  [Thread cleared. New labels: ${buildLabels().join(", ")}]\x1b[0m\n`)
         prompt()
         return
       }
 
       if (trimmed === "/status") {
-        const session = sessions.get(FAKE_CHANNEL_ID, threadTs)
         console.log("\x1b[90m  Session info:\x1b[0m")
         console.log(`    Channel: ${FAKE_CHANNEL_ID}`)
         console.log(`    Thread: ${threadTs}`)
-        console.log(`    Amp Thread: ${session?.ampThreadId || "(none)"}`)
-        console.log(`    Sprite: ${session?.spriteName || "(none)"}`)
+        console.log(`    Amp Thread: ${lastAmpThreadId || "(none)"}`)
+        console.log(`    Labels: ${buildLabels().join(", ")}`)
         console.log(`    Messages: ${messageCount}`)
         console.log()
         prompt()
         return
       }
 
-      // Process message
       console.log()
       const response = await handleMessage(trimmed, forceLocal)
 
-      // Display response
       console.log()
       console.log("\x1b[35mJane:\x1b[0m", response)
       console.log()
@@ -333,10 +312,10 @@ async function runInteractive(forceLocal: boolean): Promise<void> {
 }
 
 async function main() {
-  const { forceLocal, executePrompt, threadId } = parseArgs()
+  const { forceLocal, executePrompt } = parseArgs()
 
   if (executePrompt) {
-    await runOnce(executePrompt, forceLocal, threadId)
+    await runOnce(executePrompt, forceLocal)
   } else {
     await runInteractive(forceLocal)
   }

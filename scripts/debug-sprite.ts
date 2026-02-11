@@ -2,8 +2,8 @@
 import "dotenv/config"
 import { SpritesClient } from "../src/sprites.js"
 
-const token = process.env.SPRITES_TOKEN
-const ampKey = process.env.AMP_API_KEY
+const token = process.env.SPRITES_TOKEN!
+const ampKey = process.env.AMP_API_KEY!
 if (!token || !ampKey) {
   console.error("SPRITES_TOKEN and AMP_API_KEY required")
   process.exit(1)
