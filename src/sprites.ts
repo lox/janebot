@@ -191,6 +191,8 @@ export class SpritesClient {
       { action: "allow", domain: "github.com" },
       { action: "allow", domain: "*.github.com" },
       { action: "allow", domain: "api.github.com" },
+      { action: "allow", domain: "raw.githubusercontent.com" },
+      { action: "allow", domain: "objects.githubusercontent.com" },
     ])
 
     return sprite
