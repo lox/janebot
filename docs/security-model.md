@@ -115,17 +115,34 @@ Both are checked before any execution begins. Unauthorised requests are silently
 
 ## Secrets handling
 
-- `AMP_API_KEY` is passed into the sprite environment. This is a security trade-off for simplicity. The sprite's network policy limits where it can be sent.
 - `GITHUB_APP_PRIVATE_KEY` never enters the sprite. Only the minted installation token is passed in.
 - `SPRITES_TOKEN` is used by the host process only, never exposed to sprites.
 - `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are used by the host process only.
+- `AMP_API_KEY` is passed into the sprite environment. See the caveat below.
+
+### AMP_API_KEY exposure
+
+The `AMP_API_KEY` is passed into the sprite so that Amp can authenticate with the Amp API. This is a known security trade-off. The key is shared across all sprite executions, which means code running inside a sprite could use it to:
+
+- Read or search other Amp threads created by this bot (including threads from other Slack users)
+- Continue or modify conversations from other users
+- Access any thread data the key has permission to read
+
+We partially mitigate this by disabling `find_thread` and `read_thread` in the tool allowlist, but this is soft isolation. A prompt injection or malicious tool use could bypass the allowlist by calling the Amp API directly via `curl` or similar.
+
+Possible future mitigations:
+- **Per-request Amp tokens**: Mint scoped tokens that can only access threads created in that session. Requires Amp API support for token scoping.
+- **Amp API proxy**: Keep the real key on the host and proxy requests from the sprite, filtering by thread ID.
+- **Network policy restriction**: Remove `ampcode.com` from the sprite's network allowlist and run Amp in a mode that doesn't require API access from inside the sprite. Not currently feasible with the CLI execution model.
+
+For now, this risk is accepted. The sprite's network policy limits where the key can be exfiltrated to, and checkpoint restore discards it after each request.
 
 ## Remaining risks
 
 | Risk | Status | Notes |
 |------|--------|-------|
 | Prompt injection | Mitigated | Sprite sandbox limits blast radius |
-| AMP_API_KEY in sprite | Accepted | Network policy restricts exfiltration |
+| AMP_API_KEY in sprite | Accepted | Could access other users' threads; see above |
 | Cross-user via shared runners | Mitigated | Checkpoint restore clears state between requests |
 | MCP server credentials | Not scoped | Global config shared across all users |
 | No per-user rate limiting | Open | Could be added to prevent abuse |
