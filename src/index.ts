@@ -33,6 +33,9 @@ try {
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
 
+// Map Slack conversation (channel:thread) to the Amp thread ID from the last response,
+// so subsequent messages can optionally pull prior context via read_thread.
+const ampThreadMap = new Map<string, string>()
 // Initialize Slack app in Socket Mode
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -371,9 +374,18 @@ app.event("app_mention", async ({ event, client, say }) => {
       }
     }
 
+    const prevAmpThread = ampThreadMap.get(sessionKey)
+    if (prevAmpThread) {
+      prompt += `\n\n# Previous Amp Thread\nAmp thread from your previous response in this conversation: ${prevAmpThread}\nIf useful, you can use read_thread to review your prior work.`
+    }
+
     log.request("mention", userId, channelId, prompt)
 
     const result = await runAmp(prompt, userId)
+
+    if (result.threadId) {
+      ampThreadMap.set(sessionKey, result.threadId)
+    }
 
     let uploadErrors: string[] = []
     if (result.generatedFiles?.length && result.spriteName) {
@@ -487,9 +499,18 @@ app.event("message", async ({ event, client, say }) => {
       }
     }
 
+    const prevAmpThread = ampThreadMap.get(sessionKey)
+    if (prevAmpThread) {
+      prompt += `\n\n# Previous Amp Thread\nAmp thread from your previous response in this conversation: ${prevAmpThread}\nIf useful, you can use read_thread to review your prior work.`
+    }
+
     log.request("dm", userId, channelId, prompt)
 
     const result = await runAmp(prompt, userId)
+
+    if (result.threadId) {
+      ampThreadMap.set(sessionKey, result.threadId)
+    }
 
     // Upload any generated files (images from painter tool, etc.)
     let uploadErrors: string[] = []
