@@ -285,22 +285,60 @@ interface AmpExecutionResult {
   spriteName?: string
 }
 
+const TRANSIENT_ERROR_PATTERNS = [
+  "Model Provider Overloaded",
+  "overloaded",
+  "rate limit",
+  "529",
+  "503",
+]
+
+function isTransientError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error)
+  return TRANSIENT_ERROR_PATTERNS.some((p) => msg.toLowerCase().includes(p.toLowerCase()))
+}
+
+const AMP_RETRY_COUNT = 2
+const AMP_RETRY_DELAY_MS = 5000
+
 async function runAmp(
   prompt: string,
   userId: string
 ): Promise<AmpExecutionResult> {
-  if (config.spritesToken) {
-    return runAmpInSprite(prompt, userId)
+  const execute = () => {
+    if (config.spritesToken) {
+      return runAmpInSprite(prompt, userId)
+    }
+    if (config.allowLocalExecution) {
+      return runAmpLocal(prompt, userId)
+    }
+    throw new Error(
+      "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
+        "or ALLOW_LOCAL_EXECUTION=true for unsandboxed local execution."
+    )
   }
 
-  if (config.allowLocalExecution) {
-    return runAmpLocal(prompt, userId)
+  let lastError: unknown
+  for (let attempt = 0; attempt <= AMP_RETRY_COUNT; attempt++) {
+    try {
+      return await execute()
+    } catch (err) {
+      lastError = err
+      if (attempt < AMP_RETRY_COUNT && isTransientError(err)) {
+        const delayMs = AMP_RETRY_DELAY_MS * (attempt + 1)
+        log.warn("Transient error, retrying amp execution", {
+          attempt: attempt + 1,
+          maxRetries: AMP_RETRY_COUNT,
+          delayMs,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        continue
+      }
+      throw err
+    }
   }
-
-  throw new Error(
-    "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
-      "or ALLOW_LOCAL_EXECUTION=true for unsandboxed local execution."
-  )
+  throw lastError
 }
 
 // Handle @mentions
