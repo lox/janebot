@@ -23,16 +23,13 @@ const NETWORK_POLICY = [
 
 const CLEAN_CHECKPOINT = "clean-v2"
 
-type RunnerState = "initializing" | "ready" | "failed"
-
 interface Runner {
   name: string
   locked: boolean
-  state: RunnerState
+  ready: boolean
   checkpointId: string | undefined
 }
 
-const MAX_INIT_RETRIES = 10
 const INIT_RETRY_BASE_MS = 5000
 const INIT_RETRY_MAX_MS = 120000
 
@@ -49,25 +46,17 @@ export function initRunners(
 
   for (let i = 0; i < count; i++) {
     const name = `${RUNNER_PREFIX}${i}`
-    const runner: Runner = { name, locked: false, state: "initializing", checkpointId: undefined }
+    const runner: Runner = { name, locked: false, ready: false, checkpointId: undefined }
     runners.push(runner)
     initRunnerWithRetry(runner)
   }
 }
 
-function runnersReady(): boolean {
-  return runners.some((r) => r.state === "ready")
-}
-
-function runnersInitializing(): boolean {
-  return runners.some((r) => r.state === "initializing")
-}
-
 async function initRunnerWithRetry(runner: Runner): Promise<void> {
-  for (let attempt = 1; attempt <= MAX_INIT_RETRIES; attempt++) {
+  for (let attempt = 1; ; attempt++) {
     try {
       await initRunner(runner)
-      runner.state = "ready"
+      runner.ready = true
       log.info("Runner initialized", { name: runner.name, ...getRunnerStats() })
 
       const next = waitQueue.shift()
@@ -78,15 +67,12 @@ async function initRunnerWithRetry(runner: Runner): Promise<void> {
       log.warn("Runner init failed, retrying", {
         name: runner.name,
         attempt,
-        maxRetries: MAX_INIT_RETRIES,
         delayMs,
         error: err instanceof Error ? err.message : String(err),
       })
       await new Promise((resolve) => setTimeout(resolve, delayMs))
     }
   }
-  runner.state = "failed"
-  log.error("Runner init exhausted retries", { name: runner.name, maxRetries: MAX_INIT_RETRIES })
 }
 
 async function initRunner(runner: Runner): Promise<void> {
@@ -166,17 +152,14 @@ async function healthCheck(name: string): Promise<boolean> {
 }
 
 export async function acquireRunner(): Promise<{ name: string; release: () => Promise<void> }> {
-  const runner = runners.find((r) => r.state === "ready" && !r.locked)
+  const runner = runners.find((r) => r.ready && !r.locked)
 
   if (runner) {
     return lockRunner(runner)
   }
 
-  if (!runnersReady()) {
-    if (runnersInitializing()) {
-      throw new Error("No runners available yet — still warming up")
-    }
-    throw new Error("All runners failed to initialize")
+  if (!runners.some((r) => r.ready)) {
+    throw new Error("No runners available yet — still warming up")
   }
 
   return new Promise((resolve) => {
@@ -224,7 +207,7 @@ async function lockRunner(
 export function getRunnerStats(): { total: number; ready: number; available: number } {
   return {
     total: runners.length,
-    ready: runners.filter((r) => r.state === "ready").length,
-    available: runners.filter((r) => r.state === "ready" && !r.locked).length,
+    ready: runners.filter((r) => r.ready).length,
+    available: runners.filter((r) => r.ready && !r.locked).length,
   }
 }
