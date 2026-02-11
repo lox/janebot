@@ -42,7 +42,7 @@ export interface SpriteExecutorResult {
   generatedFiles: GeneratedFile[]
 }
 
-function parseAmpOutput(stdout: string): {
+export function parseAmpOutput(stdout: string): {
   threadId: string | undefined
   content: string
   generatedFiles: GeneratedFile[]

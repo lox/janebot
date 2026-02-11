@@ -16,12 +16,7 @@ import * as log from "./logger.js"
 import { executeInSprite, type GeneratedFile } from "./sprite-executor.js"
 import { SpritesClient } from "./sprites.js"
 import { initRunners } from "./sprite-runners.js"
-
-function cleanSlackMessage(text: string): string {
-  return text.replace(/<(\/[^|>]+)\|([^>]+)>/g, (_match, _path, label) => {
-    return `\`${label}\``
-  })
-}
+import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 
 // Load SOUL.md for Jane's personality
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -37,35 +32,6 @@ try {
 
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
-
-/**
- * Format errors for user-friendly display.
- * Hides technical details and provides actionable messages.
- */
-function formatErrorForUser(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-
-  // Authentication/configuration issues
-  if (message.includes("No API key") || message.includes("login flow")) {
-    return "I'm not configured properly. Please check the AMP_API_KEY."
-  }
-  if (message.includes("invalid_auth") || message.includes("token")) {
-    return "Authentication failed. Please check the bot configuration."
-  }
-
-  // Rate limiting
-  if (message.includes("rate limit") || message.includes("too many")) {
-    return "I'm being rate limited. Please try again in a moment."
-  }
-
-  // Timeout
-  if (message.includes("timeout") || message.includes("timed out")) {
-    return "The request timed out. Try a simpler task or try again."
-  }
-
-  // Generic fallback - don't expose raw error details
-  return "Something went wrong. Please try again."
-}
 
 // Initialize Slack app in Socket Mode
 const app = new App({
@@ -535,43 +501,12 @@ app.event("message", async ({ event, client, say }) => {
   }
 })
 
-// Helper: Send response in chunks if it exceeds Slack's limit
 async function sendChunkedResponse(
   say: (args: { text: string; thread_ts: string }) => Promise<unknown>,
   content: string,
   threadTs: string
 ) {
-  const MAX_LENGTH = 3900
-
-  if (content.length <= MAX_LENGTH) {
-    await say({ text: content, thread_ts: threadTs })
-    return
-  }
-
-  const chunks: string[] = []
-  let remaining = content
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_LENGTH) {
-      chunks.push(remaining)
-      break
-    }
-
-    let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH)
-    if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) {
-      splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH)
-    }
-    if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) {
-      splitIndex = remaining.lastIndexOf(" ", MAX_LENGTH)
-    }
-    if (splitIndex === -1) {
-      splitIndex = MAX_LENGTH
-    }
-
-    chunks.push(remaining.slice(0, splitIndex))
-    remaining = remaining.slice(splitIndex).trimStart()
-  }
-
+  const chunks = splitIntoChunks(content)
   for (const chunk of chunks) {
     await say({ text: chunk, thread_ts: threadTs })
   }

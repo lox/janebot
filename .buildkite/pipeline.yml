@@ -1,0 +1,16 @@
+agents:
+  queue: hosted
+
+env:
+  MISE_YES: "1"
+  MISE_TRUSTED_CONFIG_PATHS: /buildkite/builds
+
+steps:
+  - label: ":typescript: Typecheck"
+    command: mise exec node -- pnpm install && mise exec node -- pnpm typecheck
+
+  - label: ":test_tube: Test"
+    command: mise exec node -- pnpm install && mise exec node -- pnpm test
+
+  - label: ":package: Build"
+    command: mise exec node -- pnpm install && mise exec node -- pnpm build
