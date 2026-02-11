@@ -1,95 +1,131 @@
-# Security & Isolation Model
+# Security model
 
-This document describes the threat model and isolation strategies for janebot's multi-user environment.
+Jane runs untrusted prompts from Slack users inside sandboxed VMs. This document covers the isolation boundaries, credential handling, and what Jane can and can't do.
 
-## Execution Model
+## Execution environments
 
-Jane runs inside [Sprites](https://sprites.dev) — persistent, hardware-isolated Linux VMs (Firecracker microVMs). A pool of runner sprites is maintained with checkpoint/restore for clean state between requests.
+Jane supports two execution modes. Only one should be active at a time.
+
+### Sprites (recommended)
+
+Each request runs inside a [Sprites](https://sprites.dev) Firecracker microVM. A pool of runner sprites is initialised at startup with Amp and `gh` pre-installed, then checkpointed. Each request acquires a runner, executes, and restores to the clean checkpoint afterwards. This gives hardware-level isolation with clean state between requests.
+
+Key properties:
+- Filesystem changes don't persist between requests (checkpoint restore)
+- Network egress is restricted to an allowlist (see below)
+- Credentials are injected per-request and discarded on restore
+- Runners are shared across users but never concurrently
+
+### Local execution
+
+For single-user trusted setups only. Runs Amp directly on the host with no sandbox. Requires `ALLOW_LOCAL_EXECUTION=true`. Not suitable for multi-user deployments.
+
+## Network policy
+
+Sprites can only reach explicitly allowed domains. The current allowlist in `src/sprite-runners.ts`:
+
+| Domain | Purpose |
+|--------|---------|
+| `ampcode.com`, `*.ampcode.com` | Amp CLI and API |
+| `storage.googleapis.com`, `*.googleapis.com` | Amp infrastructure |
+| `api.anthropic.com` | LLM API |
+| `api.openai.com` | LLM API |
+| `*.cloudflare.com` | CDN |
+| `github.com`, `*.github.com`, `api.github.com` | GitHub access |
+
+All other egress is denied.
+
+## GitHub credentials
+
+Jane uses a dedicated GitHub App to get short-lived installation tokens. No long-lived personal access tokens are used.
+
+### How it works
+
+1. On startup, janebot loads the GitHub App's private key (`GITHUB_APP_PRIVATE_KEY`)
+2. Before each request, `src/github-app.ts` mints a 1-hour installation access token via the GitHub App JWT flow
+3. Tokens are cached and refreshed 5 minutes before expiry
+4. The token is used to authenticate `gh` inside the sprite (`gh auth login --with-token`)
+5. `GH_TOKEN` is also set in the environment so tools that read it directly work
+6. On checkpoint restore after the request, the token is discarded
+
+### GitHub App permissions
+
+The GitHub App is configured with minimal permissions:
+
+| Permission | Level | Why |
+|------------|-------|-----|
+| Contents | Read & write | Push feature branches |
+| Pull requests | Read & write | Create and update PRs |
+| Metadata | Read | Required by GitHub |
+
+The app does NOT have administration, merge queue, or branch protection bypass permissions.
+
+### Branch protection
+
+This is a deliberate security constraint. Jane can:
+- Create branches
+- Push commits to feature branches
+- Open and update pull requests
+
+Jane cannot:
+- Push directly to protected branches (e.g. `main`)
+- Merge pull requests without required reviews
+- Bypass branch protection rules
+
+A human must approve and merge any PR that Jane creates.
+
+### Configuration
+
+Three environment variables configure the GitHub App:
 
 ```
-Request → Acquire runner → Execute amp → Restore checkpoint → Release runner
+GITHUB_APP_ID=123456
+GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n..."
+GITHUB_APP_INSTALLATION_ID=78901234
 ```
 
-Each request gets a clean filesystem via checkpoint restore. No state persists between requests.
+The private key uses `\n` for newlines when stored as a single-line env var. If these aren't set, GitHub access is simply not available in the sprite.
 
-## Runner Pool Architecture
+## Amp tool restrictions
 
-```
-┌─────────────────────────────────────────────────┐
-│                 Runner Pool                      │
-├─────────────────────────────────────────────────┤
-│                                                  │
-│  Startup:                                        │
-│    1. Create N sprites (jane-runner-0, etc.)     │
-│    2. Install amp CLI                            │
-│    3. Checkpoint clean state                     │
-│                                                  │
-│  Per request:                                    │
-│    1. Acquire an idle runner (or queue)           │
-│    2. Health check (rebuild if unhealthy)         │
-│    3. Write settings, execute amp                │
-│    4. Restore to clean checkpoint                │
-│    5. Release runner back to pool                │
-│                                                  │
-└─────────────────────────────────────────────────┘
-```
+### Sprite execution
 
-## Threat Model
+When running in a sprite, Amp has full tool access (`--dangerously-allow-all`). This is safe because the sprite itself is the security boundary. The filesystem, network, and credentials are all scoped to the disposable VM.
 
-### Cross-User Risks
+### Local execution
 
-| Attack Vector | Mitigation |
-|---------------|------------|
-| Filesystem access across requests | Checkpoint restore wipes state between requests |
-| Prompt injection to bypass rules | Defence in depth via system prompt |
-| Network exfiltration | Network policy restricts egress to allowlisted domains |
-
-### Tool Risks
-
-| Tool | Risk Level | Notes |
-|------|------------|-------|
-| `Bash` | 🔴 High | Shell access, contained by Sprite isolation |
-| `Read`, `glob`, `Grep` | 🟡 Medium | Scoped to Sprite filesystem (clean each request) |
-| `create_file`, `edit_file` | 🟡 Medium | Scoped to Sprite filesystem (clean each request) |
-| `find_thread`, `read_thread` | 🟡 Medium | Cross-thread search via Amp API |
-
-## Network Policy
-
-Runner sprites are restricted to necessary egress only:
+When running locally, a restricted tool allowlist is applied (`src/index.ts`):
 
 ```
-ampcode.com, *.ampcode.com       — Amp CLI and API
-storage.googleapis.com           — Amp artifact storage
-api.anthropic.com                — LLM API
-api.openai.com                   — LLM API
-*.cloudflare.com, *.googleapis.com — CDN/infrastructure
+Bash, create_file, edit_file, finder, glob, Grep, librarian,
+look_at, mermaid, oracle, Read, read_web_page, skill, Task,
+undo_edit, web_search, painter
 ```
 
-All other outbound traffic is denied.
+`find_thread` and `read_thread` are excluded to prevent cross-user thread access. `handoff` and `task_list` are also excluded.
 
-## Security Trade-offs
+## Authorisation
 
-### AMP_API_KEY in Sprites
+Two layers of access control gate who can talk to Jane:
 
-The `AMP_API_KEY` is passed to Sprite VMs via the exec API. This means:
-- The key is visible inside the Sprite during execution
-- A malicious prompt could theoretically extract it
+- `ALLOWED_USER_IDS`: Slack user IDs permitted to interact. Empty means allow all.
+- `ALLOWED_CHANNEL_IDS`: Slack channel IDs where Jane will respond. Empty means allow all.
 
-Mitigations:
-- Use a dedicated, least-privileged API key
-- Network policy limits where extracted keys could be sent
-- Future: proxy LLM API calls locally to keep the key out of Sprites entirely
+Both are checked before any execution begins. Unauthorised requests are silently dropped.
 
-## Configuration
+## Secrets handling
 
-One execution environment must be configured:
+- `AMP_API_KEY` is passed into the sprite environment. This is a security trade-off for simplicity. The sprite's network policy limits where it can be sent.
+- `GITHUB_APP_PRIVATE_KEY` never enters the sprite. Only the minted installation token is passed in.
+- `SPRITES_TOKEN` is used by the host process only, never exposed to sprites.
+- `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are used by the host process only.
 
-```bash
-# Option 1: Sprites sandbox (recommended)
-SPRITES_TOKEN=your-sprites-token
+## Remaining risks
 
-# Option 2: Local execution (unsandboxed, for trusted single-user setups only)
-ALLOW_LOCAL_EXECUTION=true
-```
-
-When `SPRITES_TOKEN` is set, requests execute in isolated Sprite VMs with checkpoint/restore. Local execution requires explicit opt-in and provides no isolation.
+| Risk | Status | Notes |
+|------|--------|-------|
+| Prompt injection | Mitigated | Sprite sandbox limits blast radius |
+| AMP_API_KEY in sprite | Accepted | Network policy restricts exfiltration |
+| Cross-user via shared runners | Mitigated | Checkpoint restore clears state between requests |
+| MCP server credentials | Not scoped | Global config shared across all users |
+| No per-user rate limiting | Open | Could be added to prevent abuse |

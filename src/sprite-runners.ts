@@ -13,6 +13,10 @@ const NETWORK_POLICY = [
   { action: "allow" as const, domain: "api.openai.com" },
   { action: "allow" as const, domain: "*.cloudflare.com" },
   { action: "allow" as const, domain: "*.googleapis.com" },
+  // GitHub API and web access
+  { action: "allow" as const, domain: "github.com" },
+  { action: "allow" as const, domain: "*.github.com" },
+  { action: "allow" as const, domain: "api.github.com" },
 ]
 
 const CLEAN_CHECKPOINT = "clean"
@@ -73,8 +77,21 @@ async function buildRunner(name: string): Promise<void> {
     "curl -fsSL https://ampcode.com/install.sh | bash",
   ], { timeoutMs: 120000 })
 
+  await client.exec(name, [
+    "bash", "-c",
+    [
+      "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
+      'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null',
+      "sudo apt-get update -qq",
+      "sudo apt-get install -y -qq gh",
+    ].join(" && "),
+  ], { timeoutMs: 120000 })
+
   const ver = await client.exec(name, [AMP_BIN, "--version"], { timeoutMs: 15000 })
   log.info("Runner amp installed", { name, version: ver.stdout.trim() })
+
+  const ghVer = await client.exec(name, ["gh", "--version"], { timeoutMs: 15000 })
+  log.info("Runner gh installed", { name, version: ghVer.stdout.split("\n")[0]?.trim() })
 
   await client.createCheckpoint(name, CLEAN_CHECKPOINT)
   log.info("Runner ready", { name })
