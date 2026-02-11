@@ -103,7 +103,7 @@ function buildSystemPrompt(userId: string): string {
 
 ## Thread Privacy Rules
 When using find_thread or read_thread:
-- For "my threads" or "my previous conversations": filter with "label:slack-user-${userId}"
+- For "my threads" or "my previous conversations": filter with "label:slack-user:${userId}"
 - Public and workspace-visible threads are fine to search and reference
 - DM conversations with other users are private — don't access threads labeled with other user IDs
 `
@@ -189,12 +189,14 @@ const LOCAL_ENABLED_TOOLS = [
 
 async function runAmpInSprite(
   prompt: string,
-  userId: string
+  userId: string,
+  labels: string[]
 ): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; spriteName: string }> {
   const result = await executeInSprite({
     userId,
     prompt,
     systemPrompt: buildSystemPrompt(userId),
+    labels,
   })
   return {
     content: result.content,
@@ -206,7 +208,8 @@ async function runAmpInSprite(
 
 async function runAmpLocal(
   prompt: string,
-  userId: string
+  userId: string,
+  labels: string[]
 ): Promise<{ content: string; threadId: string | undefined }> {
   const messages = execute({
     prompt,
@@ -216,7 +219,7 @@ async function runAmpLocal(
       mcpConfig:
         Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
       systemPrompt: buildSystemPrompt(userId),
-      labels: [`slack-user-${userId}`],
+      labels,
       permissions: [{ tool: "*", action: "allow" }],
       enabledTools: LOCAL_ENABLED_TOOLS,
       logLevel: "warn",
@@ -269,14 +272,20 @@ const AMP_RETRY_DELAY_MS = 5000
 
 async function runAmp(
   prompt: string,
-  userId: string
+  userId: string,
+  slackContext: { channel: string; threadTs: string }
 ): Promise<AmpExecutionResult> {
+  const labels = [
+    `slack-user:${userId}`,
+    `slack-channel:${slackContext.channel}`,
+    `slack-thread:${slackContext.threadTs}`,
+  ]
   const execute = () => {
     if (config.spritesToken) {
-      return runAmpInSprite(prompt, userId)
+      return runAmpInSprite(prompt, userId, labels)
     }
     if (config.allowLocalExecution) {
-      return runAmpLocal(prompt, userId)
+      return runAmpLocal(prompt, userId, labels)
     }
     throw new Error(
       "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
@@ -373,7 +382,7 @@ app.event("app_mention", async ({ event, client, say }) => {
 
     log.request("mention", userId, channelId, prompt)
 
-    const result = await runAmp(prompt, userId)
+    const result = await runAmp(prompt, userId, { channel: channelId, threadTs: slackThreadTs })
 
     let uploadErrors: string[] = []
     if (result.generatedFiles?.length && result.spriteName) {
@@ -489,7 +498,7 @@ app.event("message", async ({ event, client, say }) => {
 
     log.request("dm", userId, channelId, prompt)
 
-    const result = await runAmp(prompt, userId)
+    const result = await runAmp(prompt, userId, { channel: channelId, threadTs: slackThreadTs })
 
     // Upload any generated files (images from painter tool, etc.)
     let uploadErrors: string[] = []
