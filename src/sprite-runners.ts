@@ -19,7 +19,7 @@ const NETWORK_POLICY = [
   { action: "allow" as const, domain: "api.github.com" },
 ]
 
-const CLEAN_CHECKPOINT = "clean"
+const CLEAN_CHECKPOINT = "clean-v2"
 
 interface Runner {
   name: string
