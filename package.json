@@ -1,7 +1,7 @@
 {
   "name": "janebot",
   "version": "0.1.0",
-  "description": "Slack agent powered by Amp SDK",
+  "description": "Slack agent powered by Pi",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -16,7 +16,6 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@slack/bolt": "^4.1.0",
-    "@sourcegraph/amp-sdk": "latest",
     "dotenv": "^16.4.5",
     "md-to-slack": "^1.1.7",
     "ws": "^8.19.0"

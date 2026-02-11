@@ -1,12 +1,14 @@
 import { SpritesClient } from "./sprites.js"
 import * as log from "./logger.js"
 
-const AMP_BIN = "/home/sprite/.amp/bin/amp"
+// Path from $(npm prefix -g)/bin/pi
+export const PI_BIN = "/.sprite/languages/node/nvm/versions/node/v22.20.0/bin/pi"
 const RUNNER_PREFIX = "jane-runner-"
 
 const NETWORK_POLICY = [
-  { action: "allow" as const, domain: "ampcode.com" },
-  { action: "allow" as const, domain: "*.ampcode.com" },
+  { action: "allow" as const, domain: "registry.npmjs.org" },
+  { action: "allow" as const, domain: "*.npmjs.org" },
+  { action: "allow" as const, domain: "*.npmjs.com" },
   { action: "allow" as const, domain: "storage.googleapis.com" },
   { action: "allow" as const, domain: "*.storage.googleapis.com" },
   { action: "allow" as const, domain: "api.anthropic.com" },
@@ -21,7 +23,7 @@ const NETWORK_POLICY = [
   { action: "allow" as const, domain: "objects.githubusercontent.com" },
 ]
 
-const CLEAN_CHECKPOINT = "clean-v2"
+const CLEAN_CHECKPOINT = "clean-v3"
 
 interface Runner {
   name: string
@@ -110,7 +112,7 @@ async function buildRunner(name: string): Promise<string> {
 
   await client.exec(name, [
     "bash", "-c",
-    "curl -fsSL https://ampcode.com/install.sh | bash",
+    "npm install -g @mariozechner/pi-coding-agent@0.52.9",
   ], { timeoutMs: 120000 })
 
   await client.exec(name, [
@@ -124,8 +126,10 @@ async function buildRunner(name: string): Promise<string> {
     ].join(" && "),
   ], { timeoutMs: 120000 })
 
-  const ver = await client.exec(name, [AMP_BIN, "--version"], { timeoutMs: 15000 })
-  log.info("Runner amp installed", { name, version: ver.stdout.trim() })
+  await client.exec(name, ["mkdir", "-p", "/home/sprite/artifacts"], { timeoutMs: 10000 })
+
+  const ver = await client.exec(name, [PI_BIN, "--version"], { timeoutMs: 15000 })
+  log.info("Runner pi installed", { name, version: ver.stdout.trim() })
 
   const ghVer = await client.exec(name, ["gh", "--version"], { timeoutMs: 15000 })
   log.info("Runner gh installed", { name, version: ghVer.stdout.split("\n")[0]?.trim() })

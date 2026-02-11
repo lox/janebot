@@ -1,10 +1,10 @@
 import { SpritesClient } from "./sprites.js"
 import { config } from "./config.js"
 import * as log from "./logger.js"
-import { acquireRunner } from "./sprite-runners.js"
+import { acquireRunner, PI_BIN } from "./sprite-runners.js"
 import { getGitHubToken } from "./github-app.js"
 
-const DEBUG_AMP_OUTPUT = process.env.DEBUG_AMP_OUTPUT === "1"
+const DEBUG_PI_OUTPUT = process.env.DEBUG_PI_OUTPUT === "1"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
@@ -12,15 +12,27 @@ const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
 
-const AMP_BIN = "/home/sprite/.amp/bin/amp"
+interface PiEvent {
+  type: string
+  [key: string]: unknown
+}
 
-interface AmpStreamMessage {
-  type: "system" | "assistant" | "user" | "result"
-  session_id: string
-  subtype?: "init" | "success" | "error_during_execution" | "error_max_turns"
-  result?: string
-  error?: string
-  is_error?: boolean
+interface PiAgentEndEvent extends PiEvent {
+  type: "agent_end"
+  messages: Array<{
+    role: string
+    content: Array<{ type: string; text?: string }>
+    model?: string
+  }>
+}
+
+interface PiMessageStartEvent extends PiEvent {
+  type: "message_start"
+  message: {
+    role: string
+    model?: string
+    content: Array<{ type: string; text?: string }>
+  }
 }
 
 export interface SpriteExecutorOptions {
@@ -32,7 +44,6 @@ export interface SpriteExecutorOptions {
 export interface GeneratedFile {
   path: string
   filename: string
-  data?: Buffer
 }
 
 export interface SpriteExecutorResult {
@@ -42,114 +53,55 @@ export interface SpriteExecutorResult {
   generatedFiles: GeneratedFile[]
 }
 
-export function parseAmpOutput(stdout: string): {
-  threadId: string | undefined
+export function parsePiOutput(stdout: string): {
   content: string
-  generatedFiles: GeneratedFile[]
+  model: string | undefined
 } {
-  if (DEBUG_AMP_OUTPUT) {
-    log.info("Raw amp stdout", { length: stdout.length, preview: stdout.slice(0, 2000) })
+  if (DEBUG_PI_OUTPUT) {
+    log.info("Raw pi stdout", { length: stdout.length, preview: stdout.slice(0, 2000) })
   }
 
-  let threadId: string | undefined
-  let content = ""
-  let errorMsg: string | undefined
-  const generatedFiles: GeneratedFile[] = []
-
+  const events: PiEvent[] = []
   const lines = stdout.split("\n").filter((line) => line.trim())
 
   for (const line of lines) {
     try {
-      const msg = JSON.parse(line) as Record<string, unknown>
-
-      if (msg.session_id) {
-        threadId = msg.session_id as string
-      }
-
-      if (msg.type === "result") {
-        if (msg.subtype === "success" && msg.result) {
-          content = msg.result as string
-        } else if (msg.is_error && msg.error) {
-          errorMsg = msg.error as string
-        }
-      }
-
-      if (msg.type === "assistant") {
-        const message = msg.message as Record<string, unknown> | undefined
-        const messageContent = message?.content as Array<Record<string, unknown>> | undefined
-        if (messageContent) {
-          for (const block of messageContent) {
-            if (block.type === "tool_use" && block.name === "painter") {
-              const input = block.input as Record<string, unknown> | undefined
-              if (input?.savePath) {
-                const filePath = String(input.savePath).replace(/^file:\/\//, "")
-                const filename = filePath.split("/").pop() ?? "generated-image.png"
-                if (!generatedFiles.some(f => f.path === filePath)) {
-                  generatedFiles.push({ path: filePath, filename })
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (msg.type === "user") {
-        const message = msg.message as Record<string, unknown> | undefined
-        const messageContent = message?.content as Array<Record<string, unknown>> | undefined
-        if (messageContent) {
-          for (const block of messageContent) {
-            if (block.type === "tool_result") {
-              let items: Array<Record<string, unknown>> = []
-
-              if (typeof block.content === "string") {
-                try {
-                  const parsed = JSON.parse(block.content)
-                  items = Array.isArray(parsed) ? parsed : [parsed]
-                } catch {
-                  // Not JSON
-                }
-              } else if (Array.isArray(block.content)) {
-                items = block.content as Array<Record<string, unknown>>
-              }
-
-              for (const item of items) {
-                if (item?.type === "image" && item.savedPath) {
-                  const filePath = String(item.savedPath).replace(/^file:\/\//, "")
-                  const filename = filePath.split("/").pop() ?? "generated-image.png"
-
-                  let imageData: Buffer | undefined
-                  if (item.data && typeof item.data === "string") {
-                    try {
-                      imageData = Buffer.from(String(item.data), "base64")
-                    } catch {
-                      // Invalid base64
-                    }
-                  }
-
-                  const existing = generatedFiles.find(f => f.path === filePath)
-                  if (existing) {
-                    if (imageData && !existing.data) {
-                      existing.data = imageData
-                    }
-                  } else {
-                    generatedFiles.push({ path: filePath, filename, data: imageData })
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+      events.push(JSON.parse(line) as PiEvent)
     } catch {
-      // Non-JSON line
+      // Non-JSON line — ignore
     }
   }
 
-  if (errorMsg && !content) {
-    throw new Error(errorMsg)
+  // Extract final answer from agent_end.messages
+  const agentEnd = events.find((e): e is PiAgentEndEvent => e.type === "agent_end")
+  if (!agentEnd) {
+    throw new Error("Pi execution failed: no agent_end event in output")
   }
 
-  return { threadId, content, generatedFiles }
+  // Find the last assistant message with text content
+  let content = ""
+  for (let i = agentEnd.messages.length - 1; i >= 0; i--) {
+    const msg = agentEnd.messages[i]
+    if (msg.role === "assistant") {
+      const textParts = msg.content
+        .filter((c) => c.type === "text" && c.text)
+        .map((c) => c.text!)
+      if (textParts.length > 0) {
+        content = textParts.join("\n")
+        break
+      }
+    }
+  }
+
+  // Extract model from first assistant message_start
+  const firstAssistant = events.find(
+    (e): e is PiMessageStartEvent =>
+      e.type === "message_start" &&
+      (e as PiMessageStartEvent).message?.role === "assistant"
+  )
+  const model = firstAssistant?.message?.model
+
+  return { content, model }
 }
 
 export async function executeInSprite(
@@ -166,42 +118,54 @@ export async function executeInSprite(
   try {
     log.info("Acquired runner", { sprite: spriteName })
 
-    const settingsFile = "/tmp/amp-settings.json"
-    const settings: Record<string, unknown> = {
-      "amp.permissions": [{ tool: "*", action: "allow" }],
-      "amp.git.commit.coauthor.enabled": false,
-    }
+    // Write system prompt as AGENTS.md
     if (options.systemPrompt) {
-      settings["amp.systemPrompt"] = options.systemPrompt
+      const agentsContent = options.systemPrompt.replace(/'/g, "'\\''")
+      await spritesClient.exec(spriteName, [
+        "bash", "-c",
+        `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
+      ], { timeoutMs: 30000 })
     }
-    const jsonContent = JSON.stringify(settings).replace(/'/g, "'\\''")
+
+    // Clean artifacts dir before each run
     await spritesClient.exec(spriteName, [
       "bash", "-c",
-      `printf '%s' '${jsonContent}' > ${settingsFile}`,
-    ], { timeoutMs: 30000 })
+      "rm -rf /home/sprite/artifacts && mkdir -p /home/sprite/artifacts",
+    ], { timeoutMs: 10000 })
 
-    const args: string[] = [
-      AMP_BIN,
-      "--execute", "--stream-json",
-      "--dangerously-allow-all",
-      "--mode", config.agentMode,
-      "--log-level", "warn",
-      "--settings-file", settingsFile,
-    ]
+    const args: string[] = [PI_BIN, "--mode", "json", "--no-session"]
+    if (config.piModel) {
+      args.push("--model", config.piModel)
+    }
+    if (config.piThinkingLevel && config.piThinkingLevel !== "off") {
+      args.push("--thinking", config.piThinkingLevel)
+    }
+
+    // Use the sprite's default PATH so Pi can find node
+    const pathResult = await spritesClient.exec(spriteName, ["bash", "-c", "echo $PATH"], { timeoutMs: 10000 })
+    const spritePath = pathResult.stdout.trim()
 
     const env: Record<string, string> = {
-      PATH: `/home/sprite/.amp/bin:/home/sprite/.local/bin:/usr/local/bin:/usr/bin:/bin`,
+      PATH: spritePath,
       HOME: "/home/sprite",
       NO_COLOR: "1",
       TERM: "dumb",
       CI: "true",
     }
 
-    const ampApiKey = process.env.AMP_API_KEY
-    if (!ampApiKey) {
-      throw new Error("AMP_API_KEY environment variable not set")
+    const anthropicKey = process.env.ANTHROPIC_API_KEY
+    if (!anthropicKey) {
+      throw new Error("ANTHROPIC_API_KEY environment variable not set")
     }
-    env.AMP_API_KEY = ampApiKey
+    env.ANTHROPIC_API_KEY = anthropicKey
+
+    // Pass through other provider keys if set
+    for (const key of ["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      const value = process.env[key]
+      if (value) {
+        env[key] = value
+      }
+    }
 
     let githubToken: string | undefined
     try {
@@ -233,7 +197,7 @@ export async function executeInSprite(
       log.info("GitHub CLI and git identity configured in sprite", { sprite: spriteName })
     }
 
-    log.info("Executing amp in sprite", {
+    log.info("Executing pi in sprite", {
       sprite: spriteName,
       timeoutMs: EXEC_TIMEOUT_MS,
     })
@@ -244,8 +208,8 @@ export async function executeInSprite(
       timeoutMs: EXEC_TIMEOUT_MS,
     })
 
-    if (DEBUG_AMP_OUTPUT) {
-      log.info("Amp exec result", {
+    if (DEBUG_PI_OUTPUT) {
+      log.info("Pi exec result", {
         exitCode: result.exitCode,
         stdoutLen: result.stdout.length,
         stderrLen: result.stderr.length,
@@ -253,21 +217,43 @@ export async function executeInSprite(
       })
     }
 
-    const { threadId, content, generatedFiles } = parseAmpOutput(result.stdout)
+    const { content, model } = parsePiOutput(result.stdout)
+
+    if (config.piModel && model && model !== config.piModel) {
+      log.warn("Pi used different model than configured", {
+        configured: config.piModel,
+        actual: model,
+      })
+    }
+
+    // Collect artifacts
+    const generatedFiles: GeneratedFile[] = []
+    const artifactResult = await spritesClient.exec(spriteName,
+      ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2"],
+      { timeoutMs: 10000 })
+    const artifactPaths = artifactResult.stdout.trim().split("\n").filter(Boolean)
+
+    for (const artifactPath of artifactPaths.slice(0, 10)) {
+      // Sanitise: no path traversal
+      if (artifactPath.includes("..")) {
+        log.warn("Skipping artifact with suspicious path", { path: artifactPath })
+        continue
+      }
+      const filename = artifactPath.split("/").pop() ?? "file"
+      generatedFiles.push({ path: artifactPath, filename })
+    }
 
     if (generatedFiles.length > 0) {
       const fileSummary = generatedFiles.map(f => ({
         path: f.path,
         filename: f.filename,
-        hasData: !!f.data,
-        dataSize: f.data?.length,
       }))
       log.info("Found generated files", { count: generatedFiles.length, files: fileSummary })
     }
 
     return {
       content: content || "Done.",
-      threadId,
+      threadId: undefined,
       spriteName,
       generatedFiles,
     }
