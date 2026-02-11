@@ -11,7 +11,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit -p tsconfig.check.json"
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "admin": "tsx scripts/admin.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
