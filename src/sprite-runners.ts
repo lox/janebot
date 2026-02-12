@@ -182,17 +182,8 @@ async function lockRunner(
 ): Promise<{ name: string; release: () => Promise<void> }> {
   runner.locked = true
 
-  try {
-    const healthy = await healthCheck(runner.name)
-    if (!healthy) {
-      await rebuildRunner(runner)
-    }
-  } catch (err) {
-    runner.locked = false
-    const next = waitQueue.shift()
-    if (next) next(runner)
-    throw err
-  }
+  // Skip health check — checkpoint restore on release already ensures clean state.
+  // If the sprite is broken, the exec will fail and the release will rebuild.
 
   const release = async () => {
     try {

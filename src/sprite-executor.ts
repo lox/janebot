@@ -6,6 +6,9 @@ import { getGitHubToken } from "./github-app.js"
 
 const DEBUG_PI_OUTPUT = process.env.DEBUG_PI_OUTPUT === "1"
 
+// Sprite's default PATH — stable after checkpoint, no need to query each time
+const SPRITE_PATH = "/.sprite/languages/node/nvm/versions/node/v22.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
@@ -118,21 +121,6 @@ export async function executeInSprite(
   try {
     log.info("Acquired runner", { sprite: spriteName })
 
-    // Write system prompt as AGENTS.md
-    if (options.systemPrompt) {
-      const agentsContent = options.systemPrompt.replace(/'/g, "'\\''")
-      await spritesClient.exec(spriteName, [
-        "bash", "-c",
-        `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
-      ], { timeoutMs: 30000 })
-    }
-
-    // Clean artifacts dir before each run
-    await spritesClient.exec(spriteName, [
-      "bash", "-c",
-      "rm -rf /home/sprite/artifacts && mkdir -p /home/sprite/artifacts",
-    ], { timeoutMs: 10000 })
-
     const args: string[] = [PI_BIN, "--mode", "json", "--no-session"]
     if (config.piModel) {
       args.push("--model", config.piModel)
@@ -141,12 +129,9 @@ export async function executeInSprite(
       args.push("--thinking", config.piThinkingLevel)
     }
 
-    // Use the sprite's default PATH so Pi can find node
-    const pathResult = await spritesClient.exec(spriteName, ["bash", "-c", "echo $PATH"], { timeoutMs: 10000 })
-    const spritePath = pathResult.stdout.trim()
-
+    // Build env — use the known sprite PATH (stable after checkpoint)
     const env: Record<string, string> = {
-      PATH: spritePath,
+      PATH: SPRITE_PATH,
       HOME: "/home/sprite",
       NO_COLOR: "1",
       TERM: "dumb",
@@ -167,35 +152,60 @@ export async function executeInSprite(
       }
     }
 
-    let githubToken: string | undefined
-    try {
-      githubToken = await getGitHubToken()
-    } catch (err) {
-      log.warn("Failed to mint GitHub token, continuing without GitHub access", { error: err })
+    // Run setup tasks in parallel: system prompt, artifacts dir, GitHub auth
+    const setupTasks: Promise<void>[] = []
+
+    // Write system prompt as AGENTS.md
+    if (options.systemPrompt) {
+      const agentsContent = options.systemPrompt.replace(/'/g, "'\\''")
+      setupTasks.push(
+        spritesClient.exec(spriteName, [
+          "bash", "-c",
+          `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
+        ], { timeoutMs: 30000 }).then(() => {})
+      )
     }
-    if (githubToken) {
-      env.GH_TOKEN = githubToken
-      await spritesClient.exec(spriteName, [
-        "gh", "auth", "login", "--with-token",
-      ], { env, stdin: githubToken, timeoutMs: 30000 })
-      if (config.gitAuthorName) {
-        const nameResult = await spritesClient.exec(spriteName, [
-          "git", "config", "--global", "user.name", config.gitAuthorName,
-        ], { timeoutMs: 10000 })
-        if (nameResult.exitCode !== 0) {
-          log.warn("Failed to set git user.name", { exitCode: nameResult.exitCode, stderr: nameResult.stderr })
+
+    // Clean artifacts dir before each run
+    setupTasks.push(
+      spritesClient.exec(spriteName, [
+        "bash", "-c",
+        "rm -rf /home/sprite/artifacts && mkdir -p /home/sprite/artifacts",
+      ], { timeoutMs: 10000 }).then(() => {})
+    )
+
+    // GitHub setup — mint token (cached) + configure in sprite
+    setupTasks.push((async () => {
+      let githubToken: string | undefined
+      try {
+        githubToken = await getGitHubToken()
+      } catch (err) {
+        log.warn("Failed to mint GitHub token, continuing without GitHub access", { error: err })
+      }
+      if (githubToken) {
+        env.GH_TOKEN = githubToken
+        // Run gh auth and git config in a single bash command to reduce round trips
+        const gitSetupParts = [
+          `echo '${githubToken.replace(/'/g, "'\\''")}' | gh auth login --with-token`,
+        ]
+        if (config.gitAuthorName) {
+          gitSetupParts.push(`git config --global user.name '${config.gitAuthorName.replace(/'/g, "'\\''")}'`)
+        }
+        if (config.gitAuthorEmail) {
+          gitSetupParts.push(`git config --global user.email '${config.gitAuthorEmail.replace(/'/g, "'\\''")}'`)
+        }
+        const result = await spritesClient.exec(spriteName, [
+          "bash", "-c", gitSetupParts.join(" && "),
+        ], { env, timeoutMs: 30000 })
+        if (result.exitCode !== 0) {
+          log.warn("GitHub setup failed", { exitCode: result.exitCode, stderr: result.stderr })
+        } else {
+          log.info("GitHub CLI and git identity configured in sprite", { sprite: spriteName })
         }
       }
-      if (config.gitAuthorEmail) {
-        const emailResult = await spritesClient.exec(spriteName, [
-          "git", "config", "--global", "user.email", config.gitAuthorEmail,
-        ], { timeoutMs: 10000 })
-        if (emailResult.exitCode !== 0) {
-          log.warn("Failed to set git user.email", { exitCode: emailResult.exitCode, stderr: emailResult.stderr })
-        }
-      }
-      log.info("GitHub CLI and git identity configured in sprite", { sprite: spriteName })
-    }
+    })())
+
+    await Promise.all(setupTasks)
 
     log.info("Executing pi in sprite", {
       sprite: spriteName,
