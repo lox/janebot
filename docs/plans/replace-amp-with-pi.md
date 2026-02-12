@@ -183,7 +183,7 @@ Every assistant `message_end` and `turn_end` includes usage data:
            totalTokens: number, cost: { input: number, output: number, total: number } } }
 ```
 
-### Phase 1: Sprite execution (~half day)
+### Phase 1: Sprite execution ✅ COMPLETE
 
 Swap the binary inside Sprite containers. This is the production path.
 
@@ -284,7 +284,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 # PI_THINKING_LEVEL is optional — defaults to off
 ```
 
-### Phase 2: System prompt and personality (~30min)
+### Phase 2: System prompt and personality ✅ COMPLETE
 
 - Move `SOUL.md` content into the `AGENTS.md` that gets written to sprites
 - Remove painter-specific instructions from SOUL.md
@@ -297,7 +297,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 - Update privacy/thread section — remove references to `find_thread`/`read_thread` tools. Replace with: "You cannot access other conversations. You only see the provided Slack thread history and workspace files."
 - Remove references to tools that don't exist in Pi (mermaid, oracle, librarian, painter, etc.)
 
-### Phase 3: Local execution / SDK swap (~1-3h)
+### Phase 3: Local execution / SDK swap ✅ COMPLETE
 
 #### `package.json`
 
@@ -447,8 +447,8 @@ Moving from single `AMP_API_KEY` to per-provider keys (`ANTHROPIC_API_KEY`, `OPE
 ## Suggested order
 
 1. ~~**Phase 0: Spike** — validate Pi in a sprite, capture output format~~ ✅ Done
-2. **Phase 1: Sprite execution** — swap the binary, add artifact export
-3. **Phase 2: System prompt** — update SOUL.md / AGENTS.md
-4. **Phase 3: Local SDK** — swap for dev/testing
+2. ~~**Phase 1: Sprite execution** — swap the binary, add artifact export~~ ✅ Done
+3. ~~**Phase 2: System prompt** — update SOUL.md / AGENTS.md~~ ✅ Done
+4. ~~**Phase 3: Local SDK** — swap for dev/testing~~ ✅ Done (local stubbed, sprites is production path)
 5. **Observe** — run in production, identify actual capability gaps
 6. **Address gaps** — build tool service or extensions based on real data
