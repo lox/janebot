@@ -3,12 +3,7 @@ import { readFileSync } from "fs"
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 import { App, LogLevel } from "@slack/bolt"
-import {
-  execute,
-  type StreamMessage,
-  type ResultMessage,
-  type ErrorResultMessage,
-} from "@sourcegraph/amp-sdk"
+
 import { config, isUserAllowed, isChannelAllowed } from "./config.js"
 import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
@@ -16,6 +11,7 @@ import * as log from "./logger.js"
 import { executeInSprite, type GeneratedFile } from "./sprite-executor.js"
 import { SpritesClient } from "./sprites.js"
 import { initRunners } from "./sprite-runners.js"
+import { executeLocalPi } from "./pi-local-executor.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 
 // Load SOUL.md for Jane's personality
@@ -101,22 +97,18 @@ function buildSystemPrompt(userId: string): string {
 ## Current Context
 - Slack User ID: ${userId}
 
-## Thread Privacy Rules
-When using find_thread or read_thread:
-- For "my threads" or "my previous conversations": filter with "label:slack-user-${userId}"
-- Public and workspace-visible threads are fine to search and reference
-- DM conversations with other users are private — don't access threads labeled with other user IDs
+## Privacy
+- You cannot access other conversations. You only see the provided Slack thread history.
+- Never share credentials, tokens, or secrets.
 `
   return soulPrompt ? `${soulPrompt}\n${privacyContext}` : privacyContext
 }
 
 /**
- * Upload generated files from a Sprite to a Slack channel.
- * Downloads files from the Sprite and uploads them to Slack.
+ * Upload generated files to a Slack channel.
  */
 async function uploadGeneratedFiles(
   client: typeof app.client,
-  spriteName: string,
   files: GeneratedFile[],
   channelId: string,
   threadTs: string
@@ -124,24 +116,15 @@ async function uploadGeneratedFiles(
   const errors: string[] = []
   if (files.length === 0) return errors
 
-  const token = config.spritesToken
-  const spritesClient = token ? new SpritesClient(token) : null
-
   for (const file of files) {
     try {
       let fileData: Buffer
 
-      // Prefer embedded data (from amp output) over downloading from Sprite
       if (file.data) {
-        log.info("Using embedded image data", { filename: file.filename, size: file.data.length })
         fileData = file.data
-      } else if (spritesClient) {
-        // Fall back to downloading from Sprite
-        log.info("Downloading file from sprite", { sprite: spriteName, path: file.path })
-        fileData = await spritesClient.downloadFile(spriteName, file.path)
       } else {
-        log.warn("No image data and no Sprites client, skipping file", { path: file.path })
-        errors.push(`Could not upload ${file.filename}: no image data available`)
+        // Fallback — shouldn't happen but defensive
+        errors.push(`No data for ${file.filename}`)
         continue
       }
 
@@ -165,29 +148,7 @@ async function uploadGeneratedFiles(
   return errors
 }
 
-// Tools enabled for local execution
-const LOCAL_ENABLED_TOOLS = [
-  "Bash",
-  "create_file",
-  "edit_file",
-  "finder",
-  "glob",
-  "Grep",
-  "librarian",
-  "look_at",
-  "mermaid",
-  "oracle",
-  "Read",
-  "read_web_page",
-  "skill",
-  "Task",
-  "undo_edit",
-  "web_search",
-  "painter",
-  // Excluded: find_thread, read_thread, handoff, task_list
-]
-
-async function runAmpInSprite(
+async function runPiInSprite(
   prompt: string,
   userId: string
 ): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; spriteName: string }> {
@@ -204,47 +165,20 @@ async function runAmpInSprite(
   }
 }
 
-async function runAmpLocal(
+async function runPiLocal(
   prompt: string,
   userId: string
-): Promise<{ content: string; threadId: string | undefined }> {
-  const messages = execute({
+): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[] }> {
+  return executeLocalPi({
     prompt,
-    options: {
-      cwd: config.workspaceDir,
-      mode: config.agentMode,
-      mcpConfig:
-        Object.keys(config.mcpServers).length > 0 ? config.mcpServers : undefined,
-      systemPrompt: buildSystemPrompt(userId),
-      labels: [`slack-user-${userId}`],
-      permissions: [{ tool: "*", action: "allow" }],
-      enabledTools: LOCAL_ENABLED_TOOLS,
-      logLevel: "warn",
-    },
+    systemPrompt: buildSystemPrompt(userId),
+    workspaceDir: config.workspaceDir,
+    piModel: config.piModel,
+    piThinkingLevel: config.piThinkingLevel,
   })
-
-  let threadId: string | undefined
-  let content = ""
-
-  for await (const message of messages) {
-    if ("session_id" in message && message.session_id) {
-      threadId = message.session_id
-    }
-
-    if (message.type === "result") {
-      if ((message as ResultMessage).subtype === "success") {
-        content = (message as ResultMessage).result
-      } else {
-        const errorMsg = message as ErrorResultMessage
-        throw new Error(errorMsg.error ?? "Execution failed")
-      }
-    }
-  }
-
-  return { content, threadId }
 }
 
-interface AmpExecutionResult {
+interface AgentExecutionResult {
   content: string
   threadId: string | undefined
   generatedFiles?: GeneratedFile[]
@@ -264,19 +198,19 @@ function isTransientError(error: unknown): boolean {
   return TRANSIENT_ERROR_PATTERNS.some((p) => msg.toLowerCase().includes(p.toLowerCase()))
 }
 
-const AMP_RETRY_COUNT = 2
-const AMP_RETRY_DELAY_MS = 5000
+const RETRY_COUNT = 2
+const RETRY_DELAY_MS = 5000
 
-async function runAmp(
+async function runAgent(
   prompt: string,
   userId: string
-): Promise<AmpExecutionResult> {
-  const execute = () => {
+): Promise<AgentExecutionResult> {
+  const exec = () => {
     if (config.spritesToken) {
-      return runAmpInSprite(prompt, userId)
+      return runPiInSprite(prompt, userId)
     }
     if (config.allowLocalExecution) {
-      return runAmpLocal(prompt, userId)
+      return runPiLocal(prompt, userId)
     }
     throw new Error(
       "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
@@ -285,16 +219,16 @@ async function runAmp(
   }
 
   let lastError: unknown
-  for (let attempt = 0; attempt <= AMP_RETRY_COUNT; attempt++) {
+  for (let attempt = 0; attempt <= RETRY_COUNT; attempt++) {
     try {
-      return await execute()
+      return await exec()
     } catch (err) {
       lastError = err
-      if (attempt < AMP_RETRY_COUNT && isTransientError(err)) {
-        const delayMs = AMP_RETRY_DELAY_MS * (attempt + 1)
-        log.warn("Transient error, retrying amp execution", {
+      if (attempt < RETRY_COUNT && isTransientError(err)) {
+        const delayMs = RETRY_DELAY_MS * (attempt + 1)
+        log.warn("Transient error, retrying pi execution", {
           attempt: attempt + 1,
-          maxRetries: AMP_RETRY_COUNT,
+          maxRetries: RETRY_COUNT,
           delayMs,
           error: err instanceof Error ? err.message : String(err),
         })
@@ -373,11 +307,11 @@ app.event("app_mention", async ({ event, client, say }) => {
 
     log.request("mention", userId, channelId, prompt)
 
-    const result = await runAmp(prompt, userId)
+    const result = await runAgent(prompt, userId)
 
     let uploadErrors: string[] = []
-    if (result.generatedFiles?.length && result.spriteName) {
-      uploadErrors = await uploadGeneratedFiles(client, result.spriteName, result.generatedFiles, channelId, slackThreadTs)
+    if (result.generatedFiles?.length) {
+      uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
     }
 
     let content = result.content || "Done."
@@ -489,12 +423,12 @@ app.event("message", async ({ event, client, say }) => {
 
     log.request("dm", userId, channelId, prompt)
 
-    const result = await runAmp(prompt, userId)
+    const result = await runAgent(prompt, userId)
 
     // Upload any generated files (images from painter tool, etc.)
     let uploadErrors: string[] = []
-    if (result.generatedFiles?.length && result.spriteName) {
-      uploadErrors = await uploadGeneratedFiles(client, result.spriteName, result.generatedFiles, channelId, slackThreadTs)
+    if (result.generatedFiles?.length) {
+      uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
     }
 
     let content = result.content || "Done."
@@ -570,7 +504,7 @@ async function main() {
   const executionMode = config.spritesToken ? "sprites" : "local (UNSANDBOXED)"
   log.startup({
     workspace: config.workspaceDir,
-    mode: config.agentMode,
+    piModel: config.piModel || "default",
     debounce: config.debounceMs,
     hasSoul: !!soulPrompt,
     execution: executionMode,

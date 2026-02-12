@@ -63,7 +63,7 @@ export function response(
 
 export function startup(config: {
   workspace: string
-  mode: string
+  piModel: string
   debounce: number
   hasSoul: boolean
   execution: string
@@ -71,7 +71,7 @@ export function startup(config: {
   console.log(`
 ${COLORS.cyan}⚡ janebot${COLORS.reset}
    workspace: ${config.workspace}
-   mode: ${config.mode}
+   piModel: ${config.piModel}
    debounce: ${config.debounce}ms
    soul: ${config.hasSoul ? "loaded" : "none"}
    execution: ${config.execution}

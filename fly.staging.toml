@@ -5,7 +5,6 @@ primary_region = 'syd'
   dockerfile = 'Dockerfile'
 
 [env]
-  AGENT_MODE = 'smart'
   NODE_ENV = 'production'
 
 [[vm]]

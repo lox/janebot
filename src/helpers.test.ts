@@ -18,7 +18,14 @@ describe("formatErrorForUser", () => {
   it("returns API key message for No API key errors", () => {
     assert.strictEqual(
       formatErrorForUser(new Error("No API key found")),
-      "I'm not configured properly. Please check the AMP_API_KEY."
+      "I'm not configured properly. Please check the ANTHROPIC_API_KEY."
+    )
+  })
+
+  it("returns API key message for missing Anthropic key errors", () => {
+    assert.strictEqual(
+      formatErrorForUser(new Error("ANTHROPIC_API_KEY environment variable not set")),
+      "I'm not configured properly. Please check the ANTHROPIC_API_KEY."
     )
   })
 
@@ -53,7 +60,7 @@ describe("formatErrorForUser", () => {
   it("handles plain strings", () => {
     assert.strictEqual(
       formatErrorForUser("No API key"),
-      "I'm not configured properly. Please check the AMP_API_KEY."
+      "I'm not configured properly. Please check the ANTHROPIC_API_KEY."
     )
   })
 })

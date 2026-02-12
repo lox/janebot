@@ -6,9 +6,14 @@ export function cleanSlackMessage(text: string): string {
 
 export function formatErrorForUser(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
+  const lower = message.toLowerCase()
 
-  if (message.includes("No API key") || message.includes("login flow")) {
-    return "I'm not configured properly. Please check the AMP_API_KEY."
+  if (
+    lower.includes("no api key") ||
+    lower.includes("login flow") ||
+    message.includes("ANTHROPIC_API_KEY")
+  ) {
+    return "I'm not configured properly. Please check the ANTHROPIC_API_KEY."
   }
   if (message.includes("invalid_auth") || message.includes("token")) {
     return "Authentication failed. Please check the bot configuration."

@@ -1,197 +1,221 @@
 #!/usr/bin/env npx tsx
 /**
- * Test script for Sprite execution without Slack.
+ * Integration test: janebot → Sprites → Pi → response.
+ *
+ * Tests the full execution path without Slack. Creates a temporary sprite,
+ * installs Pi, runs a prompt, verifies output parsing, and cleans up.
  *
  * Usage:
- *   pnpm test:sprite "Run ls -la and tell me what you see"
- *   pnpm test:sprite "Create a file called hello.txt with 'Hello World'"
+ *   pnpm test:sprite                              # Default test prompt
+ *   pnpm test:sprite "What is 2+2?"               # Custom prompt
+ *   pnpm test:sprite --with-artifacts              # Test artifact creation
  */
 
 import "dotenv/config"
 import { SpritesClient } from "../src/sprites.js"
+import { parsePiOutput } from "../src/sprite-executor.js"
 
-const AMP_BIN = "/home/sprite/.amp/bin/amp"
-
-interface AmpStreamMessage {
-  type: "system" | "assistant" | "user" | "result"
-  session_id: string
-  subtype?: "init" | "success" | "error_during_execution" | "error_max_turns"
-  result?: string
-  error?: string
-  is_error?: boolean
-}
-
-function parseAmpOutput(stdout: string): {
-  threadId: string | undefined
-  content: string
-  rawLines: string[]
-} {
-  let threadId: string | undefined
-  let content = ""
-  const rawLines: string[] = []
-
-  const lines = stdout.split("\n").filter((line) => line.trim())
-
-  for (const line of lines) {
-    rawLines.push(line)
-    try {
-      const msg: AmpStreamMessage = JSON.parse(line)
-
-      if (msg.session_id) {
-        threadId = msg.session_id
-      }
-
-      if (msg.type === "result") {
-        if (msg.subtype === "success" && msg.result) {
-          content = msg.result
-        } else if (msg.is_error && msg.error) {
-          content = `ERROR: ${msg.error}`
-        }
-      }
-    } catch {
-      // Non-JSON line
-      console.log("  [non-json]", line.slice(0, 100))
-    }
-  }
-
-  return { threadId, content, rawLines }
-}
+const PI_VERSION = "0.52.9"
+const SPRITE_PATH =
+  "/.sprite/languages/node/nvm/versions/node/v22.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 async function main() {
-  const prompt = process.argv.slice(2).join(" ") || "Run 'echo hello' and show me the output"
+  const args = process.argv.slice(2)
+  const withArtifacts = args.includes("--with-artifacts")
+  const customPrompt = args.filter((a) => !a.startsWith("--")).join(" ")
 
-  console.log("=== Sprite Execution Test ===\n")
+  const prompt =
+    customPrompt ||
+    (withArtifacts
+      ? "Write a haiku about coding to /home/sprite/artifacts/haiku.txt. Then tell me what you wrote."
+      : "What is 2+2? Reply with just the number.")
 
-  // Check required env vars
+  console.log("=== Pi Sprite Integration Test ===\n")
+
   const spritesToken = process.env.SPRITES_TOKEN
-  const ampApiKey = process.env.AMP_API_KEY
+  const anthropicKey = process.env.ANTHROPIC_API_KEY
 
   if (!spritesToken) {
     console.error("ERROR: SPRITES_TOKEN not set")
     process.exit(1)
   }
-  if (!ampApiKey) {
-    console.error("ERROR: AMP_API_KEY not set")
+  if (!anthropicKey) {
+    console.error("ERROR: ANTHROPIC_API_KEY not set")
     process.exit(1)
   }
 
   console.log("✓ SPRITES_TOKEN set")
-  console.log("✓ AMP_API_KEY set")
+  console.log("✓ ANTHROPIC_API_KEY set")
   console.log()
 
   const client = new SpritesClient(spritesToken)
-
-  // Use a test sprite name
   const spriteName = "jane-test-" + Date.now().toString(36)
 
   try {
-    // Create sprite
+    // Phase 1: Create sprite
+    let phaseStart = Date.now()
     console.log(`Creating sprite: ${spriteName}`)
-    const sprite = await client.create(spriteName)
-    console.log(`✓ Sprite created: ${sprite.name} (status: ${sprite.status})`)
+    await client.create(spriteName)
+    console.log(`✓ Sprite created (${ms(phaseStart)})`)
 
-    // Set network policy
-    console.log("Setting network policy...")
+    // Phase 2: Set network policy
+    phaseStart = Date.now()
     await client.setNetworkPolicy(spriteName, [
-      { action: "allow", domain: "ampcode.com" },
-      { action: "allow", domain: "*.ampcode.com" },
-      { action: "allow", domain: "storage.googleapis.com" },
+      { action: "allow", domain: "registry.npmjs.org" },
+      { action: "allow", domain: "*.npmjs.org" },
+      { action: "allow", domain: "*.npmjs.com" },
       { action: "allow", domain: "api.anthropic.com" },
       { action: "allow", domain: "api.openai.com" },
+      { action: "allow", domain: "*.googleapis.com" },
+      { action: "allow", domain: "*.cloudflare.com" },
     ])
-    console.log("✓ Network policy set")
+    console.log(`✓ Network policy set (${ms(phaseStart)})`)
 
-    // Check if amp is installed
-    console.log("\nChecking amp installation...")
-    const check = await client.exec(spriteName, [
-      "bash",
-      "-c",
-      `${AMP_BIN} --version 2>/dev/null || echo "NOT_INSTALLED"`,
-    ])
-
-    if (check.stdout.includes("NOT_INSTALLED")) {
-      console.log("Installing amp CLI...")
-      const install = await client.exec(spriteName, [
+    // Phase 3: Install Pi
+    phaseStart = Date.now()
+    console.log(`\nInstalling Pi v${PI_VERSION}...`)
+    const installResult = await client.exec(
+      spriteName,
+      [
         "bash",
         "-c",
-        "curl -fsSL https://ampcode.com/install.sh | bash",
-      ])
-      console.log("Install output:", install.stdout.slice(0, 200))
-    } else {
-      console.log(`✓ Amp already installed: ${check.stdout.trim()}`)
+        `npm install -g @mariozechner/pi-coding-agent@${PI_VERSION}`,
+      ],
+      { timeoutMs: 180000 }
+    )
+
+    if (installResult.exitCode !== 0) {
+      console.error("Pi install failed:", installResult.stderr)
+      throw new Error("Pi install failed")
     }
 
-    // Build amp command
-    const args: string[] = [
-      AMP_BIN,
-      "--execute",
-      "--stream-json",
-      "--dangerously-allow-all",
-      "--mode",
-      "smart",
-      "--log-level",
-      "warn",
-    ]
+    // Find Pi binary
+    const prefixResult = await client.exec(
+      spriteName,
+      ["bash", "-c", "npm prefix -g"],
+      { timeoutMs: 10000 }
+    )
+    const piBin = `${prefixResult.stdout.trim()}/bin/pi`
 
+    const versionResult = await client.exec(spriteName, [piBin, "--version"], {
+      timeoutMs: 10000,
+    })
+    console.log(
+      `✓ Pi ${versionResult.stdout.trim()} installed (${ms(phaseStart)})`
+    )
+
+    // Phase 4: Write AGENTS.md
+    phaseStart = Date.now()
+    await client.exec(
+      spriteName,
+      [
+        "bash",
+        "-c",
+        `printf '%s' 'You are a helpful assistant. Keep responses very short.' > /home/sprite/AGENTS.md`,
+      ],
+      { timeoutMs: 10000 }
+    )
+    console.log(`✓ AGENTS.md written (${ms(phaseStart)})`)
+
+    // Phase 5: Clean artifacts dir
+    await client.exec(
+      spriteName,
+      [
+        "bash",
+        "-c",
+        "rm -rf /home/sprite/artifacts && mkdir -p /home/sprite/artifacts",
+      ],
+      { timeoutMs: 10000 }
+    )
+
+    // Phase 6: Execute Pi
     const env: Record<string, string> = {
-      PATH: `/home/sprite/.amp/bin:/home/sprite/.local/bin:/usr/local/bin:/usr/bin:/bin`,
+      PATH: SPRITE_PATH,
       HOME: "/home/sprite",
       NO_COLOR: "1",
       TERM: "dumb",
       CI: "true",
-      AMP_API_KEY: ampApiKey,
+      ANTHROPIC_API_KEY: anthropicKey,
     }
 
-    console.log("\n=== Executing Amp ===")
-    console.log("Prompt:", prompt)
-    console.log("Args:", args.slice(1).join(" "))
-    console.log("Env keys:", Object.keys(env).join(", "))
+    console.log(`\n=== Executing Pi ===`)
+    console.log(`Prompt: ${prompt}`)
     console.log()
 
-    const startTime = Date.now()
-    const result = await client.exec(spriteName, args, {
-      env,
-      stdin: prompt + "\n",
-      timeoutMs: 120000,
-    })
-    const duration = Date.now() - startTime
+    phaseStart = Date.now()
+    const result = await client.exec(
+      spriteName,
+      [piBin, "--mode", "json", "--no-session"],
+      {
+        env,
+        stdin: prompt + "\n",
+        timeoutMs: 120000,
+      }
+    )
+    const execDuration = ms(phaseStart)
 
-    console.log(`\n=== Result (${duration}ms) ===`)
-    console.log("Exit code:", result.exitCode)
-    console.log("Stderr:", result.stderr || "(empty)")
-    console.log()
+    console.log(`Exit code: ${result.exitCode}`)
+    if (result.stderr) {
+      console.log(`Stderr: ${result.stderr.slice(0, 500)}`)
+    }
 
-    // Parse output
-    const parsed = parseAmpOutput(result.stdout)
+    // Phase 7: Parse output
+    try {
+      const parsed = parsePiOutput(result.stdout)
+      console.log(`\n=== Result (${execDuration}) ===`)
+      console.log(`Model: ${parsed.model || "(unknown)"}`)
+      console.log(`Content: ${parsed.content.slice(0, 500)}`)
 
-    console.log("=== Parsed Output ===")
-    console.log("Thread ID:", parsed.threadId || "(none)")
-    console.log("Content:", parsed.content || "(empty)")
-    console.log()
-
-    if (!parsed.content && !parsed.threadId) {
-      console.log("=== Raw stdout ===")
+      if (!parsed.content) {
+        console.warn("\n⚠ Empty content — dumping raw stdout:")
+        console.log(result.stdout.slice(0, 2000))
+      }
+    } catch (err) {
+      console.error(
+        `\n✗ Parse failed: ${err instanceof Error ? err.message : err}`
+      )
+      console.log("\nRaw stdout (first 2000 chars):")
       console.log(result.stdout.slice(0, 2000))
     }
 
-    // Cleanup
-    console.log("\nCleaning up sprite...")
-    await client.delete(spriteName)
-    console.log("✓ Sprite deleted")
+    // Phase 8: Check artifacts
+    const artifactResult = await client.exec(
+      spriteName,
+      ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2"],
+      { timeoutMs: 10000 }
+    )
+    const artifacts = artifactResult.stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
 
+    if (artifacts.length > 0) {
+      console.log(`\n=== Artifacts (${artifacts.length}) ===`)
+      for (const a of artifacts) {
+        console.log(`  ${a}`)
+      }
+    } else if (withArtifacts) {
+      console.warn("\n⚠ No artifacts found (expected with --with-artifacts)")
+    }
+
+    // Cleanup
+    console.log(`\nCleaning up sprite...`)
+    await client.delete(spriteName)
+    console.log("✓ Done")
   } catch (error) {
     console.error("\nERROR:", error)
-
-    // Try to cleanup
     try {
       await client.delete(spriteName)
       console.log("(Sprite cleaned up)")
     } catch {
       // Ignore cleanup errors
     }
-
     process.exit(1)
   }
+}
+
+function ms(start: number): string {
+  return `${((Date.now() - start) / 1000).toFixed(1)}s`
 }
 
 main()
