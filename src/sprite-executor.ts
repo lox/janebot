@@ -145,14 +145,6 @@ export async function executeInSprite(
     }
     env.ANTHROPIC_API_KEY = anthropicKey
 
-    // Pass through other provider keys if set
-    for (const key of ["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
-      const value = process.env[key]
-      if (value) {
-        env[key] = value
-      }
-    }
-
     // Run setup tasks in parallel: system prompt, artifacts dir, GitHub auth
     const setupTasks: Promise<void>[] = []
 

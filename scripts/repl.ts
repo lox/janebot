@@ -14,6 +14,7 @@ import "dotenv/config"
 import * as readline from "readline"
 import { config } from "../src/config.js"
 import { executeInSprite, type GeneratedFile } from "../src/sprite-executor.js"
+import { executeLocalPi } from "../src/pi-local-executor.js"
 
 // Fake user ID for the session
 const FAKE_USER_ID = "U_REPL_USER"
@@ -34,10 +35,14 @@ This is a test environment. Respond naturally and concisely.
 
 async function runPiLocal(
   prompt: string
-): Promise<{ content: string; threadId: string | undefined }> {
-  throw new Error(
-    "Local Pi execution not yet implemented. Use SPRITES_TOKEN for sandboxed execution."
-  )
+): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[] }> {
+  return executeLocalPi({
+    prompt,
+    systemPrompt: buildSystemPrompt(FAKE_USER_ID),
+    workspaceDir: config.workspaceDir,
+    piModel: config.piModel,
+    piThinkingLevel: config.piThinkingLevel,
+  })
 }
 
 async function runPiInSprite(

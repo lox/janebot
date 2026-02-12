@@ -11,6 +11,7 @@ import * as log from "./logger.js"
 import { executeInSprite, type GeneratedFile } from "./sprite-executor.js"
 import { SpritesClient } from "./sprites.js"
 import { initRunners } from "./sprite-runners.js"
+import { executeLocalPi } from "./pi-local-executor.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 
 // Load SOUL.md for Jane's personality
@@ -104,8 +105,7 @@ function buildSystemPrompt(userId: string): string {
 }
 
 /**
- * Upload generated files from a Sprite to a Slack channel.
- * Downloads files from the Sprite and uploads them to Slack.
+ * Upload generated files to a Slack channel.
  */
 async function uploadGeneratedFiles(
   client: typeof app.client,
@@ -168,12 +168,14 @@ async function runPiInSprite(
 async function runPiLocal(
   prompt: string,
   userId: string
-): Promise<{ content: string; threadId: string | undefined }> {
-  // Pi local execution not yet implemented — requires @mariozechner/pi-coding-agent SDK
-  // For now, throw a clear error directing to use sprites
-  throw new Error(
-    "Local Pi execution not yet implemented. Use SPRITES_TOKEN for sandboxed execution."
-  )
+): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[] }> {
+  return executeLocalPi({
+    prompt,
+    systemPrompt: buildSystemPrompt(userId),
+    workspaceDir: config.workspaceDir,
+    piModel: config.piModel,
+    piThinkingLevel: config.piThinkingLevel,
+  })
 }
 
 interface AgentExecutionResult {
