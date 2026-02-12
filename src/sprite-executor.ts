@@ -183,8 +183,8 @@ export async function executeInSprite(
         log.warn("Failed to mint GitHub token, continuing without GitHub access", { error: err })
       }
       if (githubToken) {
-        env.GH_TOKEN = githubToken
         // Run gh auth and git config in a single bash command to reduce round trips
+        // Don't pass GH_TOKEN in env here — gh refuses to store creds when it's set
         const gitSetupParts = [
           `echo '${githubToken.replace(/'/g, "'\\''")}' | gh auth login --with-token`,
         ]
@@ -196,12 +196,14 @@ export async function executeInSprite(
         }
         const result = await spritesClient.exec(spriteName, [
           "bash", "-c", gitSetupParts.join(" && "),
-        ], { env, timeoutMs: 30000 })
+        ], { timeoutMs: 30000 })
         if (result.exitCode !== 0) {
           log.warn("GitHub setup failed", { exitCode: result.exitCode, stderr: result.stderr })
         } else {
           log.info("GitHub CLI and git identity configured in sprite", { sprite: spriteName })
         }
+        // Set GH_TOKEN for Pi execution (gh CLI will also use stored creds)
+        env.GH_TOKEN = githubToken
       }
     })())
 
