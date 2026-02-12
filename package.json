@@ -14,7 +14,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
     "@slack/bolt": "^4.1.0",
     "dotenv": "^16.4.5",
     "md-to-slack": "^1.1.7",

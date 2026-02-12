@@ -1,8 +1,9 @@
 import { SpritesClient } from "./sprites.js"
 import * as log from "./logger.js"
 
-// Path from $(npm prefix -g)/bin/pi
-export const PI_BIN = "/.sprite/languages/node/nvm/versions/node/v22.20.0/bin/pi"
+// Sprite's Node.js prefix — update when sprite base image bumps Node version
+export const SPRITE_NODE_PREFIX = "/.sprite/languages/node/nvm/versions/node/v22.20.0"
+export const PI_BIN = `${SPRITE_NODE_PREFIX}/bin/pi`
 const RUNNER_PREFIX = "jane-runner-"
 
 const NETWORK_POLICY = [

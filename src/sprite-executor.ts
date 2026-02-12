@@ -1,13 +1,13 @@
 import { SpritesClient } from "./sprites.js"
 import { config } from "./config.js"
 import * as log from "./logger.js"
-import { acquireRunner, PI_BIN } from "./sprite-runners.js"
+import { acquireRunner, PI_BIN, SPRITE_NODE_PREFIX } from "./sprite-runners.js"
 import { getGitHubToken } from "./github-app.js"
 
 const DEBUG_PI_OUTPUT = process.env.DEBUG_PI_OUTPUT === "1"
 
 // Sprite's default PATH — stable after checkpoint, no need to query each time
-const SPRITE_PATH = "/.sprite/languages/node/nvm/versions/node/v22.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+const SPRITE_PATH = `${SPRITE_NODE_PREFIX}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
@@ -47,6 +47,7 @@ export interface SpriteExecutorOptions {
 export interface GeneratedFile {
   path: string
   filename: string
+  data?: Buffer
 }
 
 export interface SpriteExecutorResult {
@@ -183,24 +184,28 @@ export async function executeInSprite(
         log.warn("Failed to mint GitHub token, continuing without GitHub access", { error: err })
       }
       if (githubToken) {
-        // Run gh auth and git config in a single bash command to reduce round trips
-        // Don't pass GH_TOKEN in env here — gh refuses to store creds when it's set
-        const gitSetupParts = [
-          `echo '${githubToken.replace(/'/g, "'\\''")}' | gh auth login --with-token`,
-        ]
+        // gh auth — pass token via stdin to avoid exposing in process list
+        const authResult = await spritesClient.exec(spriteName, [
+          "gh", "auth", "login", "--with-token",
+        ], { stdin: githubToken, timeoutMs: 30000 })
+        if (authResult.exitCode !== 0) {
+          log.warn("GitHub auth failed", { exitCode: authResult.exitCode, stderr: authResult.stderr })
+        } else {
+          log.info("GitHub CLI authenticated in sprite", { sprite: spriteName })
+        }
+
+        // git config — no secrets here, safe to combine
+        const gitConfigParts: string[] = []
         if (config.gitAuthorName) {
-          gitSetupParts.push(`git config --global user.name '${config.gitAuthorName.replace(/'/g, "'\\''")}'`)
+          gitConfigParts.push(`git config --global user.name '${config.gitAuthorName.replace(/'/g, "'\\''")}'`)
         }
         if (config.gitAuthorEmail) {
-          gitSetupParts.push(`git config --global user.email '${config.gitAuthorEmail.replace(/'/g, "'\\''")}'`)
+          gitConfigParts.push(`git config --global user.email '${config.gitAuthorEmail.replace(/'/g, "'\\''")}'`)
         }
-        const result = await spritesClient.exec(spriteName, [
-          "bash", "-c", gitSetupParts.join(" && "),
-        ], { timeoutMs: 30000 })
-        if (result.exitCode !== 0) {
-          log.warn("GitHub setup failed", { exitCode: result.exitCode, stderr: result.stderr })
-        } else {
-          log.info("GitHub CLI and git identity configured in sprite", { sprite: spriteName })
+        if (gitConfigParts.length > 0) {
+          await spritesClient.exec(spriteName, [
+            "bash", "-c", gitConfigParts.join(" && "),
+          ], { timeoutMs: 10000 })
         }
         // Set GH_TOKEN for Pi execution (gh CLI will also use stored creds)
         env.GH_TOKEN = githubToken
@@ -229,6 +234,11 @@ export async function executeInSprite(
       })
     }
 
+    if (result.exitCode !== 0) {
+      const stderr = result.stderr.slice(0, 500)
+      throw new Error(`Pi exited with code ${result.exitCode}${stderr ? `: ${stderr}` : ""}`)
+    }
+
     const { content, model } = parsePiOutput(result.stdout)
 
     if (config.piModel && model && model !== config.piModel) {
@@ -241,7 +251,7 @@ export async function executeInSprite(
     // Collect artifacts
     const generatedFiles: GeneratedFile[] = []
     const artifactResult = await spritesClient.exec(spriteName,
-      ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2"],
+      ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2", "-size", "-10M"],
       { timeoutMs: 10000 })
     const artifactPaths = artifactResult.stdout.trim().split("\n").filter(Boolean)
 
@@ -252,7 +262,14 @@ export async function executeInSprite(
         continue
       }
       const filename = artifactPath.split("/").pop() ?? "file"
-      generatedFiles.push({ path: artifactPath, filename })
+      // Download file data now, before the runner is released and checkpoint restored
+      let data: Buffer | undefined
+      try {
+        data = await spritesClient.downloadFile(spriteName, artifactPath)
+      } catch (err) {
+        log.warn("Failed to download artifact", { path: artifactPath, error: err instanceof Error ? err.message : String(err) })
+      }
+      generatedFiles.push({ path: artifactPath, filename, data })
     }
 
     if (generatedFiles.length > 0) {

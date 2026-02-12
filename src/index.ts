@@ -109,7 +109,6 @@ function buildSystemPrompt(userId: string): string {
  */
 async function uploadGeneratedFiles(
   client: typeof app.client,
-  spriteName: string,
   files: GeneratedFile[],
   channelId: string,
   threadTs: string
@@ -117,19 +116,15 @@ async function uploadGeneratedFiles(
   const errors: string[] = []
   if (files.length === 0) return errors
 
-  const token = config.spritesToken
-  const spritesClient = token ? new SpritesClient(token) : null
-
   for (const file of files) {
     try {
       let fileData: Buffer
 
-      if (spritesClient) {
-        log.info("Downloading file from sprite", { sprite: spriteName, path: file.path })
-        fileData = await spritesClient.downloadFile(spriteName, file.path)
+      if (file.data) {
+        fileData = file.data
       } else {
-        log.warn("No Sprites client, skipping file", { path: file.path })
-        errors.push(`Could not upload ${file.filename}: no Sprites client available`)
+        // Fallback — shouldn't happen but defensive
+        errors.push(`No data for ${file.filename}`)
         continue
       }
 
@@ -313,8 +308,8 @@ app.event("app_mention", async ({ event, client, say }) => {
     const result = await runAgent(prompt, userId)
 
     let uploadErrors: string[] = []
-    if (result.generatedFiles?.length && result.spriteName) {
-      uploadErrors = await uploadGeneratedFiles(client, result.spriteName, result.generatedFiles, channelId, slackThreadTs)
+    if (result.generatedFiles?.length) {
+      uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
     }
 
     let content = result.content || "Done."
@@ -430,8 +425,8 @@ app.event("message", async ({ event, client, say }) => {
 
     // Upload any generated files (images from painter tool, etc.)
     let uploadErrors: string[] = []
-    if (result.generatedFiles?.length && result.spriteName) {
-      uploadErrors = await uploadGeneratedFiles(client, result.spriteName, result.generatedFiles, channelId, slackThreadTs)
+    if (result.generatedFiles?.length) {
+      uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
     }
 
     let content = result.content || "Done."
