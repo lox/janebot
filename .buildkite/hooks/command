@@ -5,4 +5,4 @@ if [[ -z "${BUILDKITE_COMMAND:-}" ]]; then
   exit 0
 fi
 
-mise exec -- sh -c "$BUILDKITE_COMMAND"
+mise exec -- bash -lc "$BUILDKITE_COMMAND"
