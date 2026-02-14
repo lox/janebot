@@ -1,12 +1,15 @@
 import { SpritesClient } from "./sprites.js"
 import * as log from "./logger.js"
 
-const AMP_BIN = "/home/sprite/.amp/bin/amp"
+// Sprite's Node.js prefix — update when sprite base image bumps Node version
+export const SPRITE_NODE_PREFIX = "/.sprite/languages/node/nvm/versions/node/v22.20.0"
+export const PI_BIN = `${SPRITE_NODE_PREFIX}/bin/pi`
 const RUNNER_PREFIX = "jane-runner-"
 
 const NETWORK_POLICY = [
-  { action: "allow" as const, domain: "ampcode.com" },
-  { action: "allow" as const, domain: "*.ampcode.com" },
+  { action: "allow" as const, domain: "registry.npmjs.org" },
+  { action: "allow" as const, domain: "*.npmjs.org" },
+  { action: "allow" as const, domain: "*.npmjs.com" },
   { action: "allow" as const, domain: "storage.googleapis.com" },
   { action: "allow" as const, domain: "*.storage.googleapis.com" },
   { action: "allow" as const, domain: "api.anthropic.com" },
@@ -21,7 +24,7 @@ const NETWORK_POLICY = [
   { action: "allow" as const, domain: "objects.githubusercontent.com" },
 ]
 
-const CLEAN_CHECKPOINT = "clean-v2"
+const CLEAN_CHECKPOINT = "clean-v3"
 
 interface Runner {
   name: string
@@ -80,19 +83,23 @@ async function initRunner(runner: Runner): Promise<void> {
 
   const existing = await client.get(name)
   if (existing) {
-    const checkpoints = await client.listCheckpoints(name)
-    const cleanCheckpoint = checkpoints.find((c) => c.comment === CLEAN_CHECKPOINT)
-    if (cleanCheckpoint) {
-      log.info("Runner already set up with checkpoint", { name, checkpointId: cleanCheckpoint.id })
-      try {
-        await client.restoreCheckpoint(name, cleanCheckpoint.id)
-        runner.checkpointId = cleanCheckpoint.id
-        return
-      } catch (err) {
-        log.warn("Checkpoint restore failed, will rebuild", { name, error: err })
+    try {
+      const checkpoints = await client.listCheckpoints(name)
+      const cleanCheckpoint = checkpoints.find((c) => c.comment === CLEAN_CHECKPOINT)
+      if (cleanCheckpoint) {
+        log.info("Runner already set up with checkpoint", { name, checkpointId: cleanCheckpoint.id })
+        try {
+          await client.restoreCheckpoint(name, cleanCheckpoint.id)
+          runner.checkpointId = cleanCheckpoint.id
+          return
+        } catch (err) {
+          log.warn("Checkpoint restore failed, will rebuild", { name, error: err })
+        }
+      } else {
+        log.info("Runner exists but no clean checkpoint, rebuilding", { name })
       }
-    } else {
-      log.info("Runner exists but no clean checkpoint, rebuilding", { name })
+    } catch (err) {
+      log.warn("Failed to list checkpoints, deleting broken sprite", { name, error: err instanceof Error ? err.message : String(err) })
     }
     await client.delete(name)
   }
@@ -106,7 +113,7 @@ async function buildRunner(name: string): Promise<string> {
 
   await client.exec(name, [
     "bash", "-c",
-    "curl -fsSL https://ampcode.com/install.sh | bash",
+    "npm install -g @mariozechner/pi-coding-agent@0.52.9",
   ], { timeoutMs: 120000 })
 
   await client.exec(name, [
@@ -120,8 +127,10 @@ async function buildRunner(name: string): Promise<string> {
     ].join(" && "),
   ], { timeoutMs: 120000 })
 
-  const ver = await client.exec(name, [AMP_BIN, "--version"], { timeoutMs: 15000 })
-  log.info("Runner amp installed", { name, version: ver.stdout.trim() })
+  await client.exec(name, ["mkdir", "-p", "/home/sprite/artifacts"], { timeoutMs: 10000 })
+
+  const ver = await client.exec(name, [PI_BIN, "--version"], { timeoutMs: 15000 })
+  log.info("Runner pi installed", { name, version: ver.stdout.trim() })
 
   const ghVer = await client.exec(name, ["gh", "--version"], { timeoutMs: 15000 })
   log.info("Runner gh installed", { name, version: ghVer.stdout.split("\n")[0]?.trim() })
@@ -174,17 +183,8 @@ async function lockRunner(
 ): Promise<{ name: string; release: () => Promise<void> }> {
   runner.locked = true
 
-  try {
-    const healthy = await healthCheck(runner.name)
-    if (!healthy) {
-      await rebuildRunner(runner)
-    }
-  } catch (err) {
-    runner.locked = false
-    const next = waitQueue.shift()
-    if (next) next(runner)
-    throw err
-  }
+  // Skip health check — checkpoint restore on release already ensures clean state.
+  // If the sprite is broken, the exec will fail and the release will rebuild.
 
   const release = async () => {
     try {
