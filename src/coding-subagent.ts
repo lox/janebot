@@ -99,22 +99,20 @@ async function ensureSpriteReady(client: SpritesClient, spriteName: string): Pro
     log.debug("Found existing sprite", { sprite: spriteName, status: existing.status })
   }
 
+  // Apply egress policy before bootstrap so installs don't depend on permissive defaults.
+  await client.setNetworkPolicy(spriteName, NETWORK_POLICY)
+
   // Ensure required binaries and working directories exist.
   await client.exec(spriteName, [
     "bash", "-c",
     [
-      `if [ ! -x \"${PI_BIN}\" ]; then ${PI_NPM_BIN} install -g @mariozechner/pi-coding-agent@0.52.9; fi`,
-      "if ! command -v gh >/dev/null 2>&1; then " +
-        "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && " +
-        "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && " +
-        "sudo apt-get update -qq && sudo apt-get install -y -qq gh; fi",
+      `if [ ! -x \"${PI_BIN}\" ]; then npm_config_update_notifier=false ${PI_NPM_BIN} install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
       `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR}`,
     ].join(" && "),
   ], {
-    timeoutMs: 180000,
+    timeoutMs: 600000,
   })
 
-  await client.setNetworkPolicy(spriteName, NETWORK_POLICY)
   readySprites.add(spriteName)
   log.info("Coding subagent sprite ready", { sprite: spriteName })
 }
