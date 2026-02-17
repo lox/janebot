@@ -1,6 +1,6 @@
 # Security model
 
-Jane runs untrusted prompts from Slack users by delegating coding work to sandboxed Sprites.
+Jane runs untrusted prompts from Slack users by delegating coding work to sandboxed Firecracker VMs.
 
 ## Execution environments
 
@@ -10,24 +10,19 @@ Jane now has two tiers:
 
 The Fly host runs the Slack control loop and a top-level Pi orchestrator session. The host orchestrator has no built-in file/shell tools and delegates coding work through a single brokered tool (`run_coding_subagent`).
 
-### Coding subagents (Sprites)
+### Coding subagents (Firecracker VMs)
 
-Each Slack thread is mapped to a dedicated Sprite + Pi session. The session is long-lived and reused across follow-up messages in that thread.
+Each Slack thread is mapped to a dedicated Firecracker VM + Pi session. The session is long-lived and reused across follow-up messages in that thread.
 
 Key properties:
-- Isolation boundary is per Slack thread (not per reply)
+- Isolation boundary is per Slack thread (not per reply) via VM boundary
 - Session state persists across turns for velocity
 - Subagents are not shared across different Slack threads
 
 ## Network policy
 
-Sprites can only reach explicitly allowed domains. The allowlist is defined in `src/coding-subagent.ts` and includes:
-
-- LLM/provider infra (`api.anthropic.com`, `api.openai.com`, Google storage/APIs, Cloudflare)
-- Package install domains (`registry.npmjs.org`, `*.npmjs.org`, `*.npmjs.com`)
-- GitHub (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`)
-
-All other egress is denied.
+The initial Firecracker implementation does not enforce egress filtering yet.
+Subagents run in VMs, but network filtering is currently left permissive.
 
 ## GitHub credentials
 
@@ -46,7 +41,7 @@ Access control is enforced before execution:
 
 ## Secrets handling
 
-- `SPRITES_TOKEN`, Slack tokens, and GitHub App private key stay on host
+- Slack tokens and GitHub App private key stay on host
 - Worker receives only scoped runtime credentials (`ANTHROPIC_API_KEY`, optional short-lived `GH_TOKEN`)
 
 ## Trade-off

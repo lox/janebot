@@ -9,9 +9,9 @@ import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
 import * as log from "./logger.js"
 import { runCodingSubagent } from "./coding-subagent.js"
+import { FirecrackerClient } from "./firecracker.js"
 import { hasOrchestratorSession, runOrchestratorTurn } from "./orchestrator.js"
 import type { GeneratedFile } from "./sprite-executor.js"
-import { SpritesClient } from "./sprites.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 
 // Load SOUL.md for Jane's personality
@@ -37,6 +37,7 @@ const app = new App({
 
 // Cache bot user ID to avoid repeated auth.test() calls
 let cachedBotUserId: string | undefined
+const SUBAGENT_ARTIFACTS_DIR = process.env.FIRECRACKER_ARTIFACTS_DIR ?? "/workspace/artifacts"
 
 async function getBotUserId(client: typeof app.client): Promise<string | undefined> {
   if (cachedBotUserId) return cachedBotUserId
@@ -100,7 +101,7 @@ function buildSubagentSystemPrompt(userId: string): string {
 - Never share credentials, tokens, or secrets.
 
 ## File Output
-- If you generate files for the user, write them to /home/sprite/artifacts/.
+- If you generate files for the user, write them to ${SUBAGENT_ARTIFACTS_DIR}.
 `
   return soulPrompt ? `${soulPrompt}\n${privacyContext}` : privacyContext
 }
@@ -455,35 +456,21 @@ async function sendChunkedResponse(
   }
 }
 
-async function runStartupSpriteDiagnostics(): Promise<void> {
-  if (!config.spritesToken) return
-
-  const client = new SpritesClient(config.spritesToken)
-  log.info("Running startup Sprites diagnostics")
+async function runStartupSandboxDiagnostics(): Promise<void> {
+  const client = new FirecrackerClient()
+  log.info("Running startup Firecracker sandbox diagnostics")
   const startedAt = Date.now()
 
   try {
-    const sprites = await client.list("jane-")
-    const counts = {
-      total: sprites.length,
-      running: 0,
-      warm: 0,
-      cold: 0,
-    }
-
-    for (const sprite of sprites) {
-      if (sprite.status === "running") counts.running += 1
-      if (sprite.status === "warm") counts.warm += 1
-      if (sprite.status === "cold") counts.cold += 1
-    }
-
-    log.info("Sprites credentials verified", {
+    const versions = await client.hostDiagnostics()
+    log.info("Firecracker diagnostics completed", {
       durationMs: Date.now() - startedAt,
-      sandboxes: counts,
+      ignite: versions.ignite,
+      firecracker: versions.firecracker,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    log.warn("Sprites startup diagnostics failed", {
+    log.warn("Firecracker startup diagnostics failed", {
       error: message,
     })
   }
@@ -491,10 +478,6 @@ async function runStartupSpriteDiagnostics(): Promise<void> {
 
 // Start the app
 async function main() {
-  if (!config.spritesToken) {
-    throw new Error("SPRITES_TOKEN is required for orchestrator + subagent execution")
-  }
-
   await app.start()
 
   log.startup({
@@ -502,11 +485,11 @@ async function main() {
     piModel: config.piModel || "default",
     debounce: config.debounceMs,
     hasSoul: !!soulPrompt,
-    execution: "orchestrator + sprite workers",
+    execution: "orchestrator + local Firecracker workers",
   })
 
   // Run diagnostics in background so Slack connectivity is never blocked.
-  void runStartupSpriteDiagnostics()
+  void runStartupSandboxDiagnostics()
 }
 
 main().catch((err) => log.error("Startup failed", err))

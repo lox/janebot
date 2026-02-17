@@ -1,39 +1,22 @@
 import { createHash, randomUUID } from "crypto"
 import { config } from "./config.js"
+import { FirecrackerClient } from "./firecracker.js"
 import { getGitHubToken } from "./github-app.js"
 import * as log from "./logger.js"
 import { parsePiOutput, type GeneratedFile } from "./sprite-executor.js"
-import { PI_BIN, SPRITE_NODE_PREFIX } from "./sprite-runners.js"
-import { SpritesClient, type NetworkPolicyRule } from "./sprites.js"
 
-const SPRITE_PATH = `${SPRITE_NODE_PREFIX}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
-const WORK_DIR = "/home/sprite/workspace"
-const ARTIFACTS_DIR = "/home/sprite/artifacts"
-const SESSIONS_DIR = "/home/sprite/sessions"
-const PI_NPM_BIN = `${SPRITE_NODE_PREFIX}/bin/npm`
+const SUBAGENT_PATH = process.env.SUBAGENT_PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+const WORK_DIR = process.env.FIRECRACKER_WORK_DIR ?? "/workspace"
+const ARTIFACTS_DIR = process.env.FIRECRACKER_ARTIFACTS_DIR ?? `${WORK_DIR}/artifacts`
+const SESSIONS_DIR = process.env.FIRECRACKER_SESSIONS_DIR ?? `${WORK_DIR}/sessions`
+const PI_CMD = process.env.SUBAGENT_PI_CMD ?? "pi"
+const NODE_VERSION = process.env.FIRECRACKER_NODE_VERSION ?? "v22.22.0"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
-
-const NETWORK_POLICY: NetworkPolicyRule[] = [
-  { action: "allow", domain: "registry.npmjs.org" },
-  { action: "allow", domain: "*.npmjs.org" },
-  { action: "allow", domain: "*.npmjs.com" },
-  { action: "allow", domain: "storage.googleapis.com" },
-  { action: "allow", domain: "*.storage.googleapis.com" },
-  { action: "allow", domain: "api.anthropic.com" },
-  { action: "allow", domain: "api.openai.com" },
-  { action: "allow", domain: "*.cloudflare.com" },
-  { action: "allow", domain: "*.googleapis.com" },
-  { action: "allow", domain: "github.com" },
-  { action: "allow", domain: "*.github.com" },
-  { action: "allow", domain: "api.github.com" },
-  { action: "allow", domain: "raw.githubusercontent.com" },
-  { action: "allow", domain: "objects.githubusercontent.com" },
-]
 
 type SessionStatus = "idle" | "running" | "error"
 
@@ -54,17 +37,7 @@ interface SubagentSession {
 const sessionsByKey = new Map<string, SubagentSession>()
 const sessionsById = new Map<string, SubagentSession>()
 const readySprites = new Set<string>()
-
-function requireSpritesToken(): string {
-  if (!config.spritesToken) {
-    throw new Error("SPRITES_TOKEN not configured")
-  }
-  return config.spritesToken
-}
-
-function getSpritesClient(): SpritesClient {
-  return new SpritesClient(requireSpritesToken())
-}
+const firecrackerClient = new FirecrackerClient()
 
 function makeThreadKey(channelId: string, threadTs: string): string {
   return `${channelId}:${threadTs}`
@@ -87,26 +60,50 @@ function getSessionById(subagentSessionId: string): SubagentSession | undefined 
   return sessionsById.get(subagentSessionId)
 }
 
-async function ensureSpriteReady(client: SpritesClient, spriteName: string): Promise<void> {
+async function ensureSpriteReady(client: FirecrackerClient, spriteName: string): Promise<void> {
   if (readySprites.has(spriteName)) return
 
-  log.debug("Ensuring sprite is ready", { sprite: spriteName })
+  log.debug("Ensuring Firecracker VM is ready", { vm: spriteName })
   const existing = await client.get(spriteName)
   if (!existing) {
-    log.info("Creating coding subagent sprite", { sprite: spriteName })
+    log.info("Creating coding subagent Firecracker VM", { vm: spriteName })
     await client.create(spriteName)
   } else {
-    log.debug("Found existing sprite", { sprite: spriteName, status: existing.status })
+    log.debug("Found existing subagent VM", { vm: spriteName, status: existing.status })
   }
-
-  // Apply egress policy before bootstrap so installs don't depend on permissive defaults.
-  await client.setNetworkPolicy(spriteName, NETWORK_POLICY)
 
   // Ensure required binaries and working directories exist.
   await client.exec(spriteName, [
     "bash", "-c",
     [
-      `if [ ! -x \"${PI_BIN}\" ]; then npm_config_update_notifier=false ${PI_NPM_BIN} install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
+      [
+        "need_node=1",
+        "if command -v node >/dev/null 2>&1; then",
+        "  major=$(node -v | sed -E 's/^v([0-9]+).*/\\1/')",
+        "  if [ \"$major\" -ge 20 ]; then need_node=0; fi",
+        "fi",
+        "if [ \"$need_node\" -eq 1 ]; then",
+        "  arch=$(uname -m)",
+        "  case \"$arch\" in x86_64) narch=x64 ;; aarch64) narch=arm64 ;; *) echo unsupported:$arch; exit 1 ;; esac",
+        `  ver=${NODE_VERSION}`,
+        "  tmp=$(mktemp -d)",
+        "  trap 'rm -rf \"$tmp\"' EXIT",
+        "  curl -fsSL \"https://nodejs.org/dist/${ver}/node-${ver}-linux-${narch}.tar.xz\" -o \"$tmp/node.tar.xz\"",
+        "  rm -rf \"/opt/node-${ver}\"",
+        "  mkdir -p \"/opt/node-${ver}\"",
+        "  tar -xJf \"$tmp/node.tar.xz\" -C \"/opt/node-${ver}\" --strip-components=1",
+        "  ln -sf \"/opt/node-${ver}/bin/node\" /usr/local/bin/node",
+        "  ln -sf \"/opt/node-${ver}/bin/npm\" /usr/local/bin/npm",
+        "  ln -sf \"/opt/node-${ver}/bin/npx\" /usr/local/bin/npx",
+        "fi",
+      ].join(" && "),
+      [
+        `if ! command -v ${PI_CMD} >/dev/null 2>&1; then`,
+        "  npm_config_update_notifier=false npm install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9",
+        "  npm_global_prefix=$(npm prefix -g)",
+        `  ln -sf \"$npm_global_prefix/bin/${PI_CMD}\" /usr/local/bin/${PI_CMD}`,
+        "fi",
+      ].join(" && "),
       `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR}`,
     ].join(" && "),
   ], {
@@ -114,11 +111,11 @@ async function ensureSpriteReady(client: SpritesClient, spriteName: string): Pro
   })
 
   readySprites.add(spriteName)
-  log.info("Coding subagent sprite ready", { sprite: spriteName })
+  log.info("Coding subagent Firecracker VM ready", { vm: spriteName })
 }
 
 async function ensureSession(
-  client: SpritesClient,
+  client: FirecrackerClient,
   channelId: string,
   threadTs: string
 ): Promise<{ session: SubagentSession; created: boolean }> {
@@ -130,7 +127,7 @@ async function ensureSession(
   }
 
   const subagentSessionId = makeSubagentSessionId(threadKey)
-  const spriteName = SpritesClient.getSpriteName(channelId, threadTs)
+  const spriteName = FirecrackerClient.getVmName(channelId, threadTs)
 
   await ensureSpriteReady(client, spriteName)
 
@@ -153,13 +150,13 @@ async function ensureSession(
 }
 
 async function prepareSpriteRun(
-  client: SpritesClient,
+  client: FirecrackerClient,
   session: SubagentSession,
   systemPrompt: string | undefined
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {
-    PATH: SPRITE_PATH,
-    HOME: "/home/sprite",
+    PATH: SUBAGENT_PATH,
+    HOME: "/root",
     NO_COLOR: "1",
     TERM: "dumb",
     CI: "true",
@@ -174,7 +171,7 @@ async function prepareSpriteRun(
   if (systemPrompt) {
     const agentsContent = systemPrompt.replace(/'/g, "'\\''")
     await client.exec(session.spriteName, [
-      "bash", "-c", `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
+      "bash", "-c", `printf '%s' '${agentsContent}' > ${WORK_DIR}/AGENTS.md`,
     ], {
       timeoutMs: 30000,
       dir: WORK_DIR,
@@ -218,7 +215,7 @@ async function prepareSpriteRun(
   return env
 }
 
-async function collectArtifacts(client: SpritesClient, session: SubagentSession): Promise<GeneratedFile[]> {
+async function collectArtifacts(client: FirecrackerClient, session: SubagentSession): Promise<GeneratedFile[]> {
   const generatedFiles: GeneratedFile[] = []
   const artifactResult = await client.exec(session.spriteName,
     ["find", ARTIFACTS_DIR, "-type", "f", "-maxdepth", "2", "-size", "-10M"],
@@ -250,7 +247,7 @@ async function collectArtifacts(client: SpritesClient, session: SubagentSession)
 }
 
 async function sendMessageToSubagent(
-  client: SpritesClient,
+  client: FirecrackerClient,
   session: SubagentSession,
   message: string,
   systemPrompt: string | undefined
@@ -263,7 +260,7 @@ async function sendMessageToSubagent(
   })
 
   const env = await prepareSpriteRun(client, session, systemPrompt)
-  const args: string[] = [PI_BIN, "--mode", "json", "--session", session.piSessionFile]
+  const args: string[] = [PI_CMD, "--mode", "json", "--session", session.piSessionFile]
 
   if (config.piModel) {
     args.push("--model", config.piModel)
@@ -374,7 +371,7 @@ export async function runCodingSubagent(
   input: RunCodingSubagentInput
 ): Promise<RunCodingSubagentResult> {
   log.debug("runCodingSubagent invoked", { action: input.action })
-  const client = getSpritesClient()
+  const client = firecrackerClient
 
   if (input.action === "start") {
     const { session, created } = await ensureSession(client, input.channelId, input.threadTs)
