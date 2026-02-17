@@ -11,6 +11,7 @@ import * as log from "./logger.js"
 import { runCodingSubagent } from "./coding-subagent.js"
 import { hasOrchestratorSession, runOrchestratorTurn } from "./orchestrator.js"
 import type { GeneratedFile } from "./sprite-executor.js"
+import { SpritesClient } from "./sprites.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 
 // Load SOUL.md for Jane's personality
@@ -454,6 +455,40 @@ async function sendChunkedResponse(
   }
 }
 
+async function runStartupSpriteDiagnostics(): Promise<void> {
+  if (!config.spritesToken) return
+
+  const client = new SpritesClient(config.spritesToken)
+  log.info("Running startup Sprites diagnostics")
+  const startedAt = Date.now()
+
+  try {
+    const sprites = await client.list("jane-")
+    const counts = {
+      total: sprites.length,
+      running: 0,
+      warm: 0,
+      cold: 0,
+    }
+
+    for (const sprite of sprites) {
+      if (sprite.status === "running") counts.running += 1
+      if (sprite.status === "warm") counts.warm += 1
+      if (sprite.status === "cold") counts.cold += 1
+    }
+
+    log.info("Sprites credentials verified", {
+      durationMs: Date.now() - startedAt,
+      sandboxes: counts,
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    log.warn("Sprites startup diagnostics failed", {
+      error: message,
+    })
+  }
+}
+
 // Start the app
 async function main() {
   if (!config.spritesToken) {
@@ -469,6 +504,9 @@ async function main() {
     hasSoul: !!soulPrompt,
     execution: "orchestrator + sprite workers",
   })
+
+  // Run diagnostics in background so Slack connectivity is never blocked.
+  void runStartupSpriteDiagnostics()
 }
 
 main().catch((err) => log.error("Startup failed", err))
