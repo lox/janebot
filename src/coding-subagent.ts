@@ -90,10 +90,13 @@ function getSessionById(subagentSessionId: string): SubagentSession | undefined 
 async function ensureSpriteReady(client: SpritesClient, spriteName: string): Promise<void> {
   if (readySprites.has(spriteName)) return
 
+  log.debug("Ensuring sprite is ready", { sprite: spriteName })
   const existing = await client.get(spriteName)
   if (!existing) {
     log.info("Creating coding subagent sprite", { sprite: spriteName })
     await client.create(spriteName)
+  } else {
+    log.debug("Found existing sprite", { sprite: spriteName, status: existing.status })
   }
 
   // Ensure required binaries and working directories exist.
@@ -124,6 +127,7 @@ async function ensureSession(
   const threadKey = makeThreadKey(channelId, threadTs)
   const existing = sessionsByKey.get(threadKey)
   if (existing) {
+    log.debug("Reusing subagent session", { subagentSessionId: existing.id, sprite: existing.spriteName })
     return { session: existing, created: false }
   }
 
@@ -145,6 +149,7 @@ async function ensureSession(
 
   sessionsByKey.set(threadKey, session)
   sessionsById.set(subagentSessionId, session)
+  log.debug("Created subagent session", { subagentSessionId, sprite: spriteName, threadKey })
 
   return { session, created: true }
 }
@@ -253,6 +258,11 @@ async function sendMessageToSubagent(
   systemPrompt: string | undefined
 ): Promise<{ content: string; generatedFiles: GeneratedFile[]; jobId: string }> {
   await ensureSpriteReady(client, session.spriteName)
+  log.debug("Sending message to coding subagent", {
+    subagentSessionId: session.id,
+    sprite: session.spriteName,
+    messagePreview: message.slice(0, 120),
+  })
 
   const env = await prepareSpriteRun(client, session, systemPrompt)
   const args: string[] = [PI_BIN, "--mode", "json", "--session", session.piSessionFile]
@@ -283,6 +293,11 @@ async function sendMessageToSubagent(
 
   const { content } = parsePiOutput(result.stdout)
   const generatedFiles = await collectArtifacts(client, session)
+  log.debug("Subagent run completed", {
+    subagentSessionId: session.id,
+    jobId,
+    artifactCount: generatedFiles.length,
+  })
 
   session.lastJobId = jobId
   session.runningJobId = undefined
@@ -360,6 +375,7 @@ function resolveSessionFromInput(
 export async function runCodingSubagent(
   input: RunCodingSubagentInput
 ): Promise<RunCodingSubagentResult> {
+  log.debug("runCodingSubagent invoked", { action: input.action })
   const client = getSpritesClient()
 
   if (input.action === "start") {
