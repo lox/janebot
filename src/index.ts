@@ -8,10 +8,9 @@ import { config, isUserAllowed, isChannelAllowed } from "./config.js"
 import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
 import * as log from "./logger.js"
-import { executeInSprite, type GeneratedFile } from "./sprite-executor.js"
-import { SpritesClient } from "./sprites.js"
-import { initRunners } from "./sprite-runners.js"
-import { executeLocalPi } from "./pi-local-executor.js"
+import { runCodingSubagent } from "./coding-subagent.js"
+import { hasOrchestratorSession, runOrchestratorTurn } from "./orchestrator.js"
+import type { GeneratedFile } from "./sprite-executor.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 
 // Load SOUL.md for Jane's personality
@@ -23,8 +22,6 @@ try {
 } catch {
   // SOUL.md is optional
 }
-
-
 
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
@@ -90,9 +87,9 @@ async function fetchThreadContext(
 }
 
 /**
- * Build context-aware system prompt with user info for privacy.
+ * Build system prompt for sprite coding subagents.
  */
-function buildSystemPrompt(userId: string): string {
+function buildSubagentSystemPrompt(userId: string): string {
   const privacyContext = `
 ## Current Context
 - Slack User ID: ${userId}
@@ -100,8 +97,40 @@ function buildSystemPrompt(userId: string): string {
 ## Privacy
 - You cannot access other conversations. You only see the provided Slack thread history.
 - Never share credentials, tokens, or secrets.
+
+## File Output
+- If you generate files for the user, write them to /home/sprite/artifacts/.
 `
   return soulPrompt ? `${soulPrompt}\n${privacyContext}` : privacyContext
+}
+
+/**
+ * Build system prompt for top-level host orchestrator.
+ */
+function buildOrchestratorSystemPrompt(userId: string): string {
+  const orchestratorContext = `
+## Role
+- You are Jane, a high-velocity orchestration agent.
+- You do not edit files or run shell commands directly on the host.
+- Delegate coding work through the run_coding_subagent tool.
+
+## Delegation Rules
+- For coding tasks, call run_coding_subagent with action="send".
+- Include clear, complete instructions in each tool call.
+- You may call the tool multiple times in one response to iterate.
+- Use action="status" when you need current state.
+- Use action="abort" only if the user explicitly asks to stop work.
+
+## Communication
+- After tool calls, summarize outcomes clearly for the user.
+- If files were produced, mention them by name.
+
+## Privacy
+- Slack User ID: ${userId}
+- Never reveal secrets or credentials.
+`
+
+  return soulPrompt ? `${soulPrompt}\n${orchestratorContext}` : orchestratorContext
 }
 
 /**
@@ -123,7 +152,6 @@ async function uploadGeneratedFiles(
       if (file.data) {
         fileData = file.data
       } else {
-        // Fallback — shouldn't happen but defensive
         errors.push(`No data for ${file.filename}`)
         continue
       }
@@ -144,147 +172,112 @@ async function uploadGeneratedFiles(
       errors.push(`Failed to upload ${file.filename}: ${errMsg}`)
     }
   }
-  
+
   return errors
 }
 
-async function runPiInSprite(
-  prompt: string,
-  userId: string
-): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; spriteName: string }> {
-  const result = await executeInSprite({
-    userId,
-    prompt,
-    systemPrompt: buildSystemPrompt(userId),
-  })
-  return {
-    content: result.content,
-    threadId: result.threadId,
-    generatedFiles: result.generatedFiles,
-    spriteName: result.spriteName,
-  }
+function extractControlCommand(rawText: string): "status" | "abort" | null {
+  const value = rawText.trim().toLowerCase()
+  if (value === "/status" || value === "status") return "status"
+  if (value === "/abort" || value === "abort") return "abort"
+  return null
 }
 
-async function runPiLocal(
-  prompt: string,
-  userId: string
-): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[] }> {
-  return executeLocalPi({
-    prompt,
-    systemPrompt: buildSystemPrompt(userId),
-    workspaceDir: config.workspaceDir,
-    piModel: config.piModel,
-    piThinkingLevel: config.piThinkingLevel,
-  })
-}
-
-interface AgentExecutionResult {
-  content: string
-  threadId: string | undefined
-  generatedFiles?: GeneratedFile[]
-  spriteName?: string
-}
-
-const TRANSIENT_ERROR_PATTERNS = [
-  "Model Provider Overloaded",
-  "overloaded",
-  "rate limit",
-  "529",
-  "503",
-]
-
-function isTransientError(error: unknown): boolean {
-  const msg = error instanceof Error ? error.message : String(error)
-  return TRANSIENT_ERROR_PATTERNS.some((p) => msg.toLowerCase().includes(p.toLowerCase()))
-}
-
-const RETRY_COUNT = 2
-const RETRY_DELAY_MS = 5000
-
-async function runAgent(
-  prompt: string,
-  userId: string
-): Promise<AgentExecutionResult> {
-  const exec = () => {
-    if (config.spritesToken) {
-      return runPiInSprite(prompt, userId)
-    }
-    if (config.allowLocalExecution) {
-      return runPiLocal(prompt, userId)
-    }
-    throw new Error(
-      "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
-        "or ALLOW_LOCAL_EXECUTION=true for unsandboxed local execution."
-    )
-  }
-
-  let lastError: unknown
-  for (let attempt = 0; attempt <= RETRY_COUNT; attempt++) {
-    try {
-      return await exec()
-    } catch (err) {
-      lastError = err
-      if (attempt < RETRY_COUNT && isTransientError(err)) {
-        const delayMs = RETRY_DELAY_MS * (attempt + 1)
-        log.warn("Transient error, retrying pi execution", {
-          attempt: attempt + 1,
-          maxRetries: RETRY_COUNT,
-          delayMs,
-          error: err instanceof Error ? err.message : String(err),
-        })
-        await new Promise((resolve) => setTimeout(resolve, delayMs))
-        continue
-      }
-      throw err
-    }
-  }
-  throw lastError
-}
-
-// Handle @mentions
-app.event("app_mention", async ({ event, client, say }) => {
-  const userId = event.user
-  const channelId = event.channel
-  const slackThreadTs = event.thread_ts ?? event.ts
-
-  if (!userId) return
-
-  // Authorization check
-  if (!isUserAllowed(userId)) {
-    log.warn("Unauthorized user", { userId })
-    return
-  }
-  if (!isChannelAllowed(channelId)) {
-    log.warn("Unauthorized channel", { channelId })
-    return
-  }
-
-  // Strip the bot mention from the message
-  const rawText = event.text.replace(/<@[A-Z0-9]+>/g, "").trim()
-  if (!rawText) {
-    await say({
-      text: "How can I help you?",
-      thread_ts: slackThreadTs,
+async function handleControlCommand(
+  command: "status" | "abort",
+  channelId: string,
+  threadTs: string,
+  say: (args: { text: string; thread_ts: string }) => Promise<unknown>
+): Promise<boolean> {
+  if (command === "status") {
+    const result = await runCodingSubagent({
+      action: "status",
+      channelId,
+      threadTs,
     })
+
+    if (result.status === "not_found") {
+      await say({
+        text: "No coding subagent session exists for this thread yet.",
+        thread_ts: threadTs,
+      })
+      return true
+    }
+
+    const details = [
+      `status: ${result.status}`,
+      result.jobId ? `job: ${result.jobId}` : undefined,
+      result.subagentSessionId ? `session: ${result.subagentSessionId}` : undefined,
+    ].filter(Boolean).join(" | ")
+
+    await say({ text: details, thread_ts: threadTs })
+    return true
+  }
+
+  const result = await runCodingSubagent({
+    action: "abort",
+    channelId,
+    threadTs,
+  })
+
+  if (result.status === "not_found") {
+    await say({
+      text: "No active coding subagent session exists for this thread.",
+      thread_ts: threadTs,
+    })
+    return true
+  }
+
+  await say({
+    text: "Requested subagent abort for this thread.",
+    thread_ts: threadTs,
+  })
+  return true
+}
+
+interface ProcessMessageParams {
+  type: "mention" | "dm"
+  userId: string
+  channelId: string
+  slackThreadTs: string
+  eventTs: string
+  rawText: string
+  isInThread: boolean
+  client: typeof app.client
+  say: (args: { text: string; thread_ts: string }) => Promise<unknown>
+}
+
+async function processMessage(params: ProcessMessageParams): Promise<void> {
+  const {
+    type,
+    userId,
+    channelId,
+    slackThreadTs,
+    eventTs,
+    rawText,
+    isInThread,
+    client,
+    say,
+  } = params
+
+  const command = extractControlCommand(rawText)
+  if (command) {
+    await handleControlCommand(command, channelId, slackThreadTs, say)
     return
   }
 
-  // Debounce key: channel + thread + user
   const debounceKey = `${channelId}:${slackThreadTs}:${userId}`
   const sessionKey = `${channelId}:${slackThreadTs}`
 
-  // Check if already processing this thread
   if (inFlight.has(sessionKey)) {
-    // Queue message for next turn via debouncer
     debounce(debounceKey, rawText)
     return
   }
 
-  // Show typing indicator
   await client.reactions
     .add({
       channel: channelId,
-      timestamp: event.ts,
+      timestamp: eventTs,
       name: "eyes",
     })
     .catch(() => {})
@@ -296,21 +289,28 @@ app.event("app_mention", async ({ event, client, say }) => {
 
     let prompt = await debounce(debounceKey, rawText)
 
-    const isInThread = event.thread_ts !== undefined
-    if (isInThread) {
+    const hadOrchestratorSession = hasOrchestratorSession(channelId, slackThreadTs)
+    if (isInThread && !hadOrchestratorSession) {
       const botUserId = await getBotUserId(client)
-      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, event.ts)
+      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, eventTs)
       if (history) {
         prompt = `Previous messages in this Slack thread:\n${history}\n\nLatest message: ${prompt}`
       }
     }
 
-    log.request("mention", userId, channelId, prompt)
+    log.request(type, userId, channelId, prompt)
 
-    const result = await runAgent(prompt, userId)
+    const result = await runOrchestratorTurn({
+      channelId,
+      threadTs: slackThreadTs,
+      userId,
+      message: prompt,
+      systemPrompt: buildOrchestratorSystemPrompt(userId),
+      subagentSystemPrompt: buildSubagentSystemPrompt(userId),
+    })
 
     let uploadErrors: string[] = []
-    if (result.generatedFiles?.length) {
+    if (result.generatedFiles.length) {
       uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
     }
 
@@ -318,21 +318,22 @@ app.event("app_mention", async ({ event, client, say }) => {
     if (uploadErrors.length > 0) {
       content += `\n\n_Note: ${uploadErrors.join("; ")}_`
     }
+
     const formatted = cleanSlackMessage(markdownToSlack(content))
     await sendChunkedResponse(say, formatted, slackThreadTs)
 
-    log.response("mention", userId, Date.now() - startTime, true)
+    log.response(type, userId, Date.now() - startTime, true)
 
     await client.reactions
       .add({
         channel: channelId,
-        timestamp: event.ts,
+        timestamp: eventTs,
         name: "white_check_mark",
       })
       .catch(() => {})
   } catch (error) {
-    log.error("Error processing mention", error)
-    log.response("mention", userId, Date.now() - startTime, false)
+    log.error("Error processing message", error)
+    log.response(type, userId, Date.now() - startTime, false)
     cancel(debounceKey)
 
     await say({
@@ -341,7 +342,7 @@ app.event("app_mention", async ({ event, client, say }) => {
     })
 
     await client.reactions
-      .add({ channel: channelId, timestamp: event.ts, name: "x" })
+      .add({ channel: channelId, timestamp: eventTs, name: "x" })
       .catch(() => {})
   } finally {
     inFlight.delete(sessionKey)
@@ -349,19 +350,52 @@ app.event("app_mention", async ({ event, client, say }) => {
     await client.reactions
       .remove({
         channel: channelId,
-        timestamp: event.ts,
+        timestamp: eventTs,
         name: "eyes",
       })
       .catch(() => {})
   }
+}
+
+// Handle @mentions
+app.event("app_mention", async ({ event, client, say }) => {
+  const userId = event.user
+  const channelId = event.channel
+  const slackThreadTs = event.thread_ts ?? event.ts
+
+  if (!userId) return
+
+  if (!isUserAllowed(userId)) {
+    log.warn("Unauthorized user", { userId })
+    return
+  }
+  if (!isChannelAllowed(channelId)) {
+    log.warn("Unauthorized channel", { channelId })
+    return
+  }
+
+  const rawText = event.text.replace(/<@[A-Z0-9]+>/g, "").trim()
+  if (!rawText) {
+    await say({ text: "How can I help you?", thread_ts: slackThreadTs })
+    return
+  }
+
+  await processMessage({
+    type: "mention",
+    userId,
+    channelId,
+    slackThreadTs,
+    eventTs: event.ts,
+    rawText,
+    isInThread: event.thread_ts !== undefined,
+    client,
+    say,
+  })
 })
 
 // Handle direct messages
 app.event("message", async ({ event, client, say }) => {
-  // Only handle DMs (channel type "im")
   if (event.channel_type !== "im") return
-
-  // Ignore bot messages and message_changed events
   if ("bot_id" in event || "subtype" in event) return
 
   const messageEvent = event as {
@@ -375,7 +409,6 @@ app.event("message", async ({ event, client, say }) => {
   const userId = messageEvent.user
   if (!userId) return
 
-  // Authorization check
   if (!isUserAllowed(userId)) {
     log.warn("Unauthorized DM user", { userId })
     return
@@ -384,93 +417,19 @@ app.event("message", async ({ event, client, say }) => {
   const slackThreadTs = messageEvent.thread_ts ?? messageEvent.ts
   const channelId = messageEvent.channel
   const rawText = messageEvent.text ?? ""
-
   if (!rawText) return
 
-  const debounceKey = `${channelId}:${slackThreadTs}:${userId}`
-  const sessionKey = `${channelId}:${slackThreadTs}`
-
-  // Check if already processing
-  if (inFlight.has(sessionKey)) {
-    debounce(debounceKey, rawText)
-    return
-  }
-
-  // Show typing indicator
-  await client.reactions
-    .add({
-      channel: channelId,
-      timestamp: messageEvent.ts,
-      name: "eyes",
-    })
-    .catch(() => {})
-
-  const startTime = Date.now()
-
-  try {
-    inFlight.add(sessionKey)
-
-    let prompt = await debounce(debounceKey, rawText)
-
-    const isInThread = messageEvent.thread_ts !== undefined
-    if (isInThread) {
-      const botUserId = await getBotUserId(client)
-      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, messageEvent.ts)
-      if (history) {
-        prompt = `Previous messages in this Slack thread:\n${history}\n\nLatest message: ${prompt}`
-      }
-    }
-
-    log.request("dm", userId, channelId, prompt)
-
-    const result = await runAgent(prompt, userId)
-
-    // Upload any generated files (images from painter tool, etc.)
-    let uploadErrors: string[] = []
-    if (result.generatedFiles?.length) {
-      uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
-    }
-
-    let content = result.content || "Done."
-    if (uploadErrors.length > 0) {
-      content += `\n\n_Note: ${uploadErrors.join("; ")}_`
-    }
-    const formatted = cleanSlackMessage(markdownToSlack(content))
-    await sendChunkedResponse(say, formatted, slackThreadTs)
-
-    log.response("dm", userId, Date.now() - startTime, true)
-
-    await client.reactions
-      .add({
-        channel: channelId,
-        timestamp: messageEvent.ts,
-        name: "white_check_mark",
-      })
-      .catch(() => {})
-  } catch (error) {
-    log.error("Error processing DM", error)
-    log.response("dm", userId, Date.now() - startTime, false)
-    cancel(debounceKey)
-
-    await say({
-      text: formatErrorForUser(error),
-      thread_ts: slackThreadTs,
-    })
-
-    await client.reactions
-      .add({ channel: channelId, timestamp: messageEvent.ts, name: "x" })
-      .catch(() => {})
-  } finally {
-    inFlight.delete(sessionKey)
-
-    await client.reactions
-      .remove({
-        channel: channelId,
-        timestamp: messageEvent.ts,
-        name: "eyes",
-      })
-      .catch(() => {})
-  }
+  await processMessage({
+    type: "dm",
+    userId,
+    channelId,
+    slackThreadTs,
+    eventTs: messageEvent.ts,
+    rawText,
+    isInThread: messageEvent.thread_ts !== undefined,
+    client,
+    say,
+  })
 })
 
 async function sendChunkedResponse(
@@ -486,28 +445,18 @@ async function sendChunkedResponse(
 
 // Start the app
 async function main() {
-  if (!config.spritesToken && !config.allowLocalExecution) {
-    throw new Error(
-      "No execution environment configured. Set SPRITES_TOKEN for sandboxed execution, " +
-        "or ALLOW_LOCAL_EXECUTION=true for unsandboxed local execution."
-    )
+  if (!config.spritesToken) {
+    throw new Error("SPRITES_TOKEN is required for orchestrator + subagent execution")
   }
 
   await app.start()
 
-  // Initialize sprite runners in background (non-blocking)
-  if (config.spritesToken) {
-    const spritesClient = new SpritesClient(config.spritesToken)
-    initRunners(spritesClient, 2)
-  }
-
-  const executionMode = config.spritesToken ? "sprites" : "local (UNSANDBOXED)"
   log.startup({
     workspace: config.workspaceDir,
     piModel: config.piModel || "default",
     debounce: config.debounceMs,
     hasSoul: !!soulPrompt,
-    execution: executionMode,
+    execution: "orchestrator + sprite workers",
   })
 }
 
