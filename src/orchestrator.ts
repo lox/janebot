@@ -14,6 +14,7 @@ interface OrchestratorSession {
   key: string
   session: AgentSession
   generatedFiles: GeneratedFile[]
+  progressCallback?: (message: string) => Promise<void>
 }
 
 export interface OrchestratorInput {
@@ -23,6 +24,7 @@ export interface OrchestratorInput {
   message: string
   systemPrompt: string
   subagentSystemPrompt: string
+  progressCallback?: (message: string) => Promise<void>
 }
 
 export interface OrchestratorResult {
@@ -130,6 +132,7 @@ function buildOrchestratorTool(
   threadTs: string,
   generatedFiles: GeneratedFile[],
   subagentSystemPrompt: string,
+  getProgressCallback: () => ((message: string) => Promise<void>) | undefined,
 ): ToolDefinition {
   return {
     name: "run_coding_subagent",
@@ -187,6 +190,16 @@ function buildOrchestratorTool(
         }
       }
 
+      const currentStatus = await runCodingSubagent({ action: "status", channelId, threadTs })
+      if (currentStatus.status === "not_found") {
+        const progressCallback = getProgressCallback()
+        if (progressCallback) {
+          await progressCallback(
+            "_Spinning up a coding environment for this thread. First run can take a minute._"
+          ).catch(() => {})
+        }
+      }
+
       const result = await runCodingSubagent({
         action: "message",
         channelId,
@@ -232,7 +245,13 @@ async function createOrchestratorSession(
   await loader.reload()
 
   const customTools: ToolDefinition[] = [
-    buildOrchestratorTool(channelId, threadTs, generatedFiles, subagentSystemPrompt),
+    buildOrchestratorTool(
+      channelId,
+      threadTs,
+      generatedFiles,
+      subagentSystemPrompt,
+      () => sessions.get(key)?.progressCallback
+    ),
   ]
 
   const { session } = await createAgentSession({
@@ -282,6 +301,7 @@ export async function runOrchestratorTurn(input: OrchestratorInput): Promise<Orc
     input.subagentSystemPrompt,
   )
 
+  session.progressCallback = input.progressCallback
   session.generatedFiles.length = 0
 
   const beforeCount = session.session.messages.length
