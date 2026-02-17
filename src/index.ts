@@ -308,6 +308,11 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
       systemPrompt: buildOrchestratorSystemPrompt(userId),
       subagentSystemPrompt: buildSubagentSystemPrompt(userId),
       progressCallback: async (message) => {
+        log.debug("Posting orchestrator progress update", {
+          channelId,
+          threadTs: slackThreadTs,
+          message,
+        })
         await say({
           text: message,
           thread_ts: slackThreadTs,

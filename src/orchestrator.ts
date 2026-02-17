@@ -9,6 +9,7 @@ import {
 import { config } from "./config.js"
 import { runCodingSubagent, type RunCodingSubagentResult } from "./coding-subagent.js"
 import type { GeneratedFile } from "./sprite-executor.js"
+import * as log from "./logger.js"
 
 interface OrchestratorSession {
   key: string
@@ -294,6 +295,11 @@ async function getOrCreateSession(
 }
 
 export async function runOrchestratorTurn(input: OrchestratorInput): Promise<OrchestratorResult> {
+  log.debug("Running orchestrator turn", {
+    channelId: input.channelId,
+    threadTs: input.threadTs,
+    userId: input.userId,
+  })
   const { session, created } = await getOrCreateSession(
     input.channelId,
     input.threadTs,
@@ -306,6 +312,11 @@ export async function runOrchestratorTurn(input: OrchestratorInput): Promise<Orc
 
   const beforeCount = session.session.messages.length
   await session.session.prompt(input.message)
+  log.debug("Orchestrator prompt complete", {
+    channelId: input.channelId,
+    threadTs: input.threadTs,
+    sessionCreated: created,
+  })
 
   const content = extractAssistantText(session.session.messages, beforeCount) || "Done."
 

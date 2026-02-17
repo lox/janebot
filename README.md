@@ -39,6 +39,7 @@ Mention `@janebot` in a channel or DM her.
 | `ANTHROPIC_API_KEY` | From your Anthropic account |
 | `WORKSPACE_DIR` | Where Jane works |
 | `PI_MODEL` | LLM model (optional, defaults to claude-opus-4-6) |
+| `JANE_LOG_LEVEL` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `ALLOWED_USER_IDS` | Who can talk to her |
 | `ALLOWED_CHANNEL_IDS` | Where she listens |
 
