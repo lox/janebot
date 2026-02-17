@@ -307,6 +307,12 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
       message: prompt,
       systemPrompt: buildOrchestratorSystemPrompt(userId),
       subagentSystemPrompt: buildSubagentSystemPrompt(userId),
+      progressCallback: async (message) => {
+        await say({
+          text: message,
+          thread_ts: slackThreadTs,
+        })
+      },
     })
 
     let uploadErrors: string[] = []
