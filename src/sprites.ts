@@ -13,9 +13,13 @@
 import { createHash } from "crypto"
 import WebSocket from "ws"
 import * as log from "./logger.js"
+import type { SandboxClient } from "./sandbox.js"
 
 const API_BASE = "https://api.sprites.dev"
 const WS_BASE = "wss://api.sprites.dev"
+
+// Sprite's Node.js prefix — update when sprite base image bumps Node version
+const SPRITE_NODE_PREFIX = "/.sprite/languages/node/nvm/versions/node/v22.20.0"
 
 export interface SpriteInfo {
   id: string
@@ -45,7 +49,11 @@ export interface Checkpoint {
   comment?: string
 }
 
-export class SpritesClient {
+export class SpritesClient implements SandboxClient {
+  readonly piBin = `${SPRITE_NODE_PREFIX}/bin/pi`
+  readonly npmBin = `${SPRITE_NODE_PREFIX}/bin/npm`
+  readonly defaultPath = `${SPRITE_NODE_PREFIX}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
+
   private token: string
   private baseUrl: string
 

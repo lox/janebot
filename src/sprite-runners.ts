@@ -1,9 +1,6 @@
-import { SpritesClient } from "./sprites.js"
+import type { SandboxClient } from "./sandbox.js"
 import * as log from "./logger.js"
 
-// Sprite's Node.js prefix — update when sprite base image bumps Node version
-export const SPRITE_NODE_PREFIX = "/.sprite/languages/node/nvm/versions/node/v22.20.0"
-export const PI_BIN = `${SPRITE_NODE_PREFIX}/bin/pi`
 const RUNNER_PREFIX = "jane-runner-"
 
 const NETWORK_POLICY = [
@@ -36,16 +33,16 @@ interface Runner {
 const INIT_RETRY_BASE_MS = 5000
 const INIT_RETRY_MAX_MS = 120000
 
-let client: SpritesClient
+let client: SandboxClient
 const runners: Runner[] = []
 const waitQueue: Array<(runner: Runner) => void> = []
 
 export function initRunners(
-  spritesClient: SpritesClient,
+  sandboxClient: SandboxClient,
   count = 2
 ): void {
-  client = spritesClient
-  log.info("Initializing sprite runners in background", { count })
+  client = sandboxClient
+  log.info("Initializing sandbox runners in background", { count })
 
   for (let i = 0; i < count; i++) {
     const name = `${RUNNER_PREFIX}${i}`
@@ -99,7 +96,7 @@ async function initRunner(runner: Runner): Promise<void> {
         log.info("Runner exists but no clean checkpoint, rebuilding", { name })
       }
     } catch (err) {
-      log.warn("Failed to list checkpoints, deleting broken sprite", { name, error: err instanceof Error ? err.message : String(err) })
+      log.warn("Failed to list checkpoints, deleting broken sandbox", { name, error: err instanceof Error ? err.message : String(err) })
     }
     await client.delete(name)
   }
@@ -129,7 +126,7 @@ async function buildRunner(name: string): Promise<string> {
 
   await client.exec(name, ["mkdir", "-p", "/home/sprite/artifacts"], { timeoutMs: 10000 })
 
-  const ver = await client.exec(name, [PI_BIN, "--version"], { timeoutMs: 15000 })
+  const ver = await client.exec(name, [client.piBin, "--version"], { timeoutMs: 15000 })
   log.info("Runner pi installed", { name, version: ver.stdout.trim() })
 
   const ghVer = await client.exec(name, ["gh", "--version"], { timeoutMs: 15000 })
@@ -149,15 +146,6 @@ async function rebuildRunner(runner: Runner): Promise<void> {
     // may already be gone
   }
   runner.checkpointId = await buildRunner(runner.name)
-}
-
-async function healthCheck(name: string): Promise<boolean> {
-  try {
-    const result = await client.exec(name, ["echo", "ok"], { timeoutMs: 10000 })
-    return result.exitCode === 0 && result.stdout.includes("ok")
-  } catch {
-    return false
-  }
 }
 
 export async function acquireRunner(): Promise<{ name: string; release: () => Promise<void> }> {
@@ -184,7 +172,7 @@ async function lockRunner(
   runner.locked = true
 
   // Skip health check — checkpoint restore on release already ensures clean state.
-  // If the sprite is broken, the exec will fail and the release will rebuild.
+  // If the sandbox is broken, the exec will fail and the release will rebuild.
 
   const release = async () => {
     try {

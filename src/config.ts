@@ -9,15 +9,19 @@ export interface JanebotConfig {
   // Behavior
   debounceMs: number
   maxResponseLength: number
+  subagentPrewarmCount: number
 
   // Authorization (empty arrays = allow all)
   allowedUserIds: string[]
   allowedChannelIds: string[]
 
-  // Sprites (required for sandboxed execution)
+  // Sandbox backend: "sprites" (Fly VMs) or "docker" (local Docker)
+  sandboxBackend: "sprites" | "docker"
+
+  // Sprites (required when sandboxBackend is "sprites")
   spritesToken: string | undefined
 
-  // Git identity for commits made in sprites
+  // Git identity for commits made in sandboxes
   gitAuthorName: string | undefined
   gitAuthorEmail: string | undefined
 
@@ -33,14 +37,22 @@ function parseList(value: string | undefined): string[] {
     .filter(Boolean)
 }
 
+function parseSandboxBackend(): "sprites" | "docker" {
+  const value = (process.env.SANDBOX_BACKEND ?? "").toLowerCase()
+  if (value === "docker") return "docker"
+  return "sprites"
+}
+
 export const config: JanebotConfig = {
   workspaceDir: process.env.WORKSPACE_DIR ?? process.cwd(),
   piModel: process.env.PI_MODEL || undefined,
   piThinkingLevel: process.env.PI_THINKING_LEVEL || undefined,
   debounceMs: parseInt(process.env.DEBOUNCE_MS ?? "1500", 10),
   maxResponseLength: parseInt(process.env.MAX_RESPONSE_LENGTH ?? "10000", 10),
+  subagentPrewarmCount: parseInt(process.env.SUBAGENT_PREWARM_COUNT ?? "1", 10),
   allowedUserIds: parseList(process.env.ALLOWED_USER_IDS),
   allowedChannelIds: parseList(process.env.ALLOWED_CHANNEL_IDS),
+  sandboxBackend: parseSandboxBackend(),
   spritesToken: process.env.SPRITES_TOKEN,
   gitAuthorName: process.env.GIT_AUTHOR_NAME,
   gitAuthorEmail: process.env.GIT_AUTHOR_EMAIL,

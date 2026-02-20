@@ -11,7 +11,9 @@ import * as log from "./logger.js"
 import { runCodingSubagent } from "./coding-subagent.js"
 import { runOrchestratorTurn } from "./orchestrator.js"
 import type { GeneratedFile } from "./sprite-executor.js"
+import { initSandboxClient, getSandboxClient } from "./sandbox.js"
 import { SpritesClient } from "./sprites.js"
+import { DockerSandboxClient } from "./docker-sandbox.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 
 // Load SOUL.md for Jane's personality
@@ -454,45 +456,54 @@ async function sendChunkedResponse(
   }
 }
 
-async function runStartupSpriteDiagnostics(): Promise<void> {
-  if (!config.spritesToken) return
-
-  const client = new SpritesClient(config.spritesToken)
-  log.info("Running startup Sprites diagnostics")
+async function runStartupDiagnostics(): Promise<void> {
+  const client = getSandboxClient()
+  log.info("Running startup sandbox diagnostics", { backend: config.sandboxBackend })
   const startedAt = Date.now()
 
   try {
-    const sprites = await client.list("jane-")
+    const sandboxes = await client.list("jane-")
     const counts = {
-      total: sprites.length,
+      total: sandboxes.length,
       running: 0,
       warm: 0,
       cold: 0,
     }
 
-    for (const sprite of sprites) {
-      if (sprite.status === "running") counts.running += 1
-      if (sprite.status === "warm") counts.warm += 1
-      if (sprite.status === "cold") counts.cold += 1
+    for (const sandbox of sandboxes) {
+      if (sandbox.status === "running") counts.running += 1
+      if (sandbox.status === "warm") counts.warm += 1
+      if (sandbox.status === "cold") counts.cold += 1
     }
 
-    log.info("Sprites credentials verified", {
+    log.info("Sandbox backend verified", {
+      backend: config.sandboxBackend,
       durationMs: Date.now() - startedAt,
       sandboxes: counts,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    log.warn("Sprites startup diagnostics failed", {
+    log.warn("Sandbox startup diagnostics failed", {
+      backend: config.sandboxBackend,
       error: message,
     })
   }
 }
 
+function createSandboxClient() {
+  if (config.sandboxBackend === "docker") {
+    return new DockerSandboxClient()
+  }
+  if (!config.spritesToken) {
+    throw new Error("SPRITES_TOKEN is required when SANDBOX_BACKEND=sprites")
+  }
+  return new SpritesClient(config.spritesToken)
+}
+
 // Start the app
 async function main() {
-  if (!config.spritesToken) {
-    throw new Error("SPRITES_TOKEN is required for orchestrator + subagent execution")
-  }
+  const client = createSandboxClient()
+  initSandboxClient(client)
 
   await app.start()
 
@@ -501,11 +512,11 @@ async function main() {
     piModel: config.piModel || "default",
     debounce: config.debounceMs,
     hasSoul: !!soulPrompt,
-    execution: "orchestrator + sprite workers",
+    execution: `orchestrator + ${config.sandboxBackend} workers`,
   })
 
   // Run diagnostics in background so Slack connectivity is never blocked.
-  void runStartupSpriteDiagnostics()
+  void runStartupDiagnostics()
 }
 
 main().catch((err) => log.error("Startup failed", err))

@@ -3,14 +3,11 @@ import { config } from "./config.js"
 import { getGitHubToken } from "./github-app.js"
 import * as log from "./logger.js"
 import { parsePiOutput, type GeneratedFile } from "./sprite-executor.js"
-import { PI_BIN, SPRITE_NODE_PREFIX } from "./sprite-runners.js"
-import { SpritesClient, type NetworkPolicyRule } from "./sprites.js"
+import { getSandboxClient, getSandboxName, type SandboxClient, type SandboxNetworkPolicyRule } from "./sandbox.js"
 
-const SPRITE_PATH = `${SPRITE_NODE_PREFIX}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
 const WORK_DIR = "/home/sprite/workspace"
 const ARTIFACTS_DIR = "/home/sprite/artifacts"
 const SESSIONS_DIR = "/home/sprite/sessions"
-const PI_NPM_BIN = `${SPRITE_NODE_PREFIX}/bin/npm`
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
@@ -18,7 +15,7 @@ const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
 
-const NETWORK_POLICY: NetworkPolicyRule[] = [
+const NETWORK_POLICY: SandboxNetworkPolicyRule[] = [
   { action: "allow", domain: "registry.npmjs.org" },
   { action: "allow", domain: "*.npmjs.org" },
   { action: "allow", domain: "*.npmjs.com" },
@@ -55,17 +52,6 @@ const sessionsByKey = new Map<string, SubagentSession>()
 const sessionsById = new Map<string, SubagentSession>()
 const readySprites = new Set<string>()
 
-function requireSpritesToken(): string {
-  if (!config.spritesToken) {
-    throw new Error("SPRITES_TOKEN not configured")
-  }
-  return config.spritesToken
-}
-
-function getSpritesClient(): SpritesClient {
-  return new SpritesClient(requireSpritesToken())
-}
-
 function makeThreadKey(channelId: string, threadTs: string): string {
   return `${channelId}:${threadTs}`
 }
@@ -87,7 +73,7 @@ function getSessionById(subagentSessionId: string): SubagentSession | undefined 
   return sessionsById.get(subagentSessionId)
 }
 
-async function ensureSpriteReady(client: SpritesClient, spriteName: string): Promise<void> {
+async function ensureSpriteReady(client: SandboxClient, spriteName: string): Promise<void> {
   if (readySprites.has(spriteName)) return
 
   log.debug("Ensuring sprite is ready", { sprite: spriteName })
@@ -106,7 +92,7 @@ async function ensureSpriteReady(client: SpritesClient, spriteName: string): Pro
   await client.exec(spriteName, [
     "bash", "-c",
     [
-      `if [ ! -x \"${PI_BIN}\" ]; then npm_config_update_notifier=false ${PI_NPM_BIN} install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
+      `if [ ! -x "${client.piBin}" ]; then npm_config_update_notifier=false "${client.npmBin}" install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
       `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR}`,
     ].join(" && "),
   ], {
@@ -118,7 +104,7 @@ async function ensureSpriteReady(client: SpritesClient, spriteName: string): Pro
 }
 
 async function ensureSession(
-  client: SpritesClient,
+  client: SandboxClient,
   channelId: string,
   threadTs: string
 ): Promise<{ session: SubagentSession; created: boolean }> {
@@ -130,7 +116,7 @@ async function ensureSession(
   }
 
   const subagentSessionId = makeSubagentSessionId(threadKey)
-  const spriteName = SpritesClient.getSpriteName(channelId, threadTs)
+  const spriteName = getSandboxName(channelId, threadTs)
 
   await ensureSpriteReady(client, spriteName)
 
@@ -153,12 +139,12 @@ async function ensureSession(
 }
 
 async function prepareSpriteRun(
-  client: SpritesClient,
+  client: SandboxClient,
   session: SubagentSession,
   systemPrompt: string | undefined
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {
-    PATH: SPRITE_PATH,
+    PATH: client.defaultPath,
     HOME: "/home/sprite",
     NO_COLOR: "1",
     TERM: "dumb",
@@ -218,7 +204,7 @@ async function prepareSpriteRun(
   return env
 }
 
-async function collectArtifacts(client: SpritesClient, session: SubagentSession): Promise<GeneratedFile[]> {
+async function collectArtifacts(client: SandboxClient, session: SubagentSession): Promise<GeneratedFile[]> {
   const generatedFiles: GeneratedFile[] = []
   const artifactResult = await client.exec(session.spriteName,
     ["find", ARTIFACTS_DIR, "-type", "f", "-maxdepth", "2", "-size", "-10M"],
@@ -250,7 +236,7 @@ async function collectArtifacts(client: SpritesClient, session: SubagentSession)
 }
 
 async function sendMessageToSubagent(
-  client: SpritesClient,
+  client: SandboxClient,
   session: SubagentSession,
   message: string,
   systemPrompt: string | undefined
@@ -263,7 +249,7 @@ async function sendMessageToSubagent(
   })
 
   const env = await prepareSpriteRun(client, session, systemPrompt)
-  const args: string[] = [PI_BIN, "--mode", "json", "--session", session.piSessionFile]
+  const args: string[] = [client.piBin, "--mode", "json", "--session", session.piSessionFile]
 
   if (config.piModel) {
     args.push("--model", config.piModel)
@@ -358,7 +344,7 @@ export interface RunCodingSubagentResult {
 function rehydrateSession(channelId: string, threadTs: string): SubagentSession {
   const threadKey = makeThreadKey(channelId, threadTs)
   const subagentSessionId = makeSubagentSessionId(threadKey)
-  const spriteName = SpritesClient.getSpriteName(channelId, threadTs)
+  const spriteName = getSandboxName(channelId, threadTs)
 
   const session: SubagentSession = {
     id: subagentSessionId,
@@ -397,7 +383,7 @@ export async function runCodingSubagent(
   input: RunCodingSubagentInput
 ): Promise<RunCodingSubagentResult> {
   log.debug("runCodingSubagent invoked", { action: input.action })
-  const client = getSpritesClient()
+  const client = getSandboxClient()
 
   if (input.action === "start") {
     const { session, created } = await ensureSession(client, input.channelId, input.threadTs)
@@ -413,7 +399,7 @@ export async function runCodingSubagent(
   if (input.action === "status") {
     let session = resolveSessionFromInput(input)
     if (!session && input.channelId && input.threadTs) {
-      const sprite = await client.get(SpritesClient.getSpriteName(input.channelId, input.threadTs))
+      const sprite = await client.get(getSandboxName(input.channelId, input.threadTs))
       if (sprite) {
         session = rehydrateSession(input.channelId, input.threadTs)
       }
@@ -433,7 +419,7 @@ export async function runCodingSubagent(
   if (input.action === "abort") {
     let session = resolveSessionFromInput(input)
     if (!session && input.channelId && input.threadTs) {
-      const sprite = await client.get(SpritesClient.getSpriteName(input.channelId, input.threadTs))
+      const sprite = await client.get(getSandboxName(input.channelId, input.threadTs))
       if (sprite) {
         session = rehydrateSession(input.channelId, input.threadTs)
       }
