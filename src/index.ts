@@ -9,7 +9,7 @@ import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
 import * as log from "./logger.js"
 import { runCodingSubagent } from "./coding-subagent.js"
-import { hasOrchestratorSession, runOrchestratorTurn } from "./orchestrator.js"
+import { runOrchestratorTurn } from "./orchestrator.js"
 import type { GeneratedFile } from "./sprite-executor.js"
 import { SpritesClient } from "./sprites.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
@@ -290,8 +290,7 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
 
     let prompt = await debounce(debounceKey, rawText)
 
-    const hadOrchestratorSession = hasOrchestratorSession(channelId, slackThreadTs)
-    if (isInThread && !hadOrchestratorSession) {
+    if (isInThread) {
       const botUserId = await getBotUserId(client)
       const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, eventTs)
       if (history) {

@@ -355,6 +355,29 @@ export interface RunCodingSubagentResult {
   generatedFiles: GeneratedFile[]
 }
 
+function rehydrateSession(channelId: string, threadTs: string): SubagentSession {
+  const threadKey = makeThreadKey(channelId, threadTs)
+  const subagentSessionId = makeSubagentSessionId(threadKey)
+  const spriteName = SpritesClient.getSpriteName(channelId, threadTs)
+
+  const session: SubagentSession = {
+    id: subagentSessionId,
+    key: threadKey,
+    spriteName,
+    piSessionFile: `${SESSIONS_DIR}/${subagentSessionId}.jsonl`,
+    status: "idle",
+    turns: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
+
+  sessionsByKey.set(threadKey, session)
+  sessionsById.set(subagentSessionId, session)
+  log.debug("Rehydrated subagent session from deterministic keys", { subagentSessionId, spriteName })
+
+  return session
+}
+
 function resolveSessionFromInput(
   input:
     | RunCodingSubagentMessageInput
@@ -388,7 +411,13 @@ export async function runCodingSubagent(
   }
 
   if (input.action === "status") {
-    const session = resolveSessionFromInput(input)
+    let session = resolveSessionFromInput(input)
+    if (!session && input.channelId && input.threadTs) {
+      const sprite = await client.get(SpritesClient.getSpriteName(input.channelId, input.threadTs))
+      if (sprite) {
+        session = rehydrateSession(input.channelId, input.threadTs)
+      }
+    }
     if (!session) {
       return { status: "not_found", generatedFiles: [] }
     }
@@ -402,7 +431,13 @@ export async function runCodingSubagent(
   }
 
   if (input.action === "abort") {
-    const session = resolveSessionFromInput(input)
+    let session = resolveSessionFromInput(input)
+    if (!session && input.channelId && input.threadTs) {
+      const sprite = await client.get(SpritesClient.getSpriteName(input.channelId, input.threadTs))
+      if (sprite) {
+        session = rehydrateSession(input.channelId, input.threadTs)
+      }
+    }
     if (!session) {
       return { status: "not_found", generatedFiles: [] }
     }
