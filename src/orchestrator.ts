@@ -16,12 +16,15 @@ interface OrchestratorSession {
   session: AgentSession
   generatedFiles: GeneratedFile[]
   progressCallback?: (message: string) => Promise<void>
+  subagentSystemPrompt: string
+  lastSeenEventTs?: string
 }
 
 export interface OrchestratorInput {
   channelId: string
   threadTs: string
   userId: string
+  eventTs: string
   message: string
   systemPrompt: string
   subagentSystemPrompt: string
@@ -42,6 +45,10 @@ function makeKey(channelId: string, threadTs: string): string {
 
 export function hasOrchestratorSession(channelId: string, threadTs: string): boolean {
   return sessions.has(makeKey(channelId, threadTs))
+}
+
+export function getLastSeenEventTs(channelId: string, threadTs: string): string | undefined {
+  return sessions.get(makeKey(channelId, threadTs))?.lastSeenEventTs
 }
 
 function formatSubagentResult(result: RunCodingSubagentResult): string {
@@ -132,7 +139,7 @@ function buildOrchestratorTool(
   channelId: string,
   threadTs: string,
   generatedFiles: GeneratedFile[],
-  subagentSystemPrompt: string,
+  getSubagentSystemPrompt: () => string,
   getProgressCallback: () => ((message: string) => Promise<void>) | undefined,
 ): ToolDefinition {
   return {
@@ -206,7 +213,7 @@ function buildOrchestratorTool(
         channelId,
         threadTs,
         message: instruction,
-        systemPrompt: subagentSystemPrompt,
+        systemPrompt: getSubagentSystemPrompt(),
       })
 
       generatedFiles.push(...result.generatedFiles)
@@ -250,7 +257,7 @@ async function createOrchestratorSession(
       channelId,
       threadTs,
       generatedFiles,
-      subagentSystemPrompt,
+      () => sessions.get(key)?.subagentSystemPrompt ?? subagentSystemPrompt,
       () => sessions.get(key)?.progressCallback
     ),
   ]
@@ -267,6 +274,7 @@ async function createOrchestratorSession(
     key,
     session,
     generatedFiles,
+    subagentSystemPrompt,
   }
 
   sessions.set(key, orchestratorSession)
@@ -308,10 +316,13 @@ export async function runOrchestratorTurn(input: OrchestratorInput): Promise<Orc
   )
 
   session.progressCallback = input.progressCallback
+  session.subagentSystemPrompt = input.subagentSystemPrompt
   session.generatedFiles.length = 0
 
   const beforeCount = session.session.messages.length
   await session.session.prompt(input.message)
+
+  session.lastSeenEventTs = input.eventTs
   log.debug("Orchestrator prompt complete", {
     channelId: input.channelId,
     threadTs: input.threadTs,

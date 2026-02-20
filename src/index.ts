@@ -9,7 +9,7 @@ import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
 import * as log from "./logger.js"
 import { runCodingSubagent } from "./coding-subagent.js"
-import { runOrchestratorTurn } from "./orchestrator.js"
+import { hasOrchestratorSession, getLastSeenEventTs, runOrchestratorTurn } from "./orchestrator.js"
 import type { GeneratedFile } from "./sprite-executor.js"
 import { initSandboxClient, getSandboxClient } from "./sandbox.js"
 import { SpritesClient } from "./sprites.js"
@@ -52,7 +52,8 @@ async function fetchThreadContext(
   channel: string,
   threadTs: string,
   botUserId: string | undefined,
-  beforeTs: string
+  beforeTs: string,
+  afterTs?: string
 ): Promise<string | null> {
   try {
     const result = await client.conversations.replies({
@@ -68,6 +69,7 @@ async function fetchThreadContext(
     const formatted = result.messages
       .filter((m) => {
         if (Number(m.ts) >= Number(beforeTs)) return false
+        if (afterTs && Number(m.ts) <= Number(afterTs)) return false
         return true
       })
       .map((m) => {
@@ -294,9 +296,11 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
 
     if (isInThread) {
       const botUserId = await getBotUserId(client)
-      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, eventTs)
+      const afterTs = getLastSeenEventTs(channelId, slackThreadTs)
+      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, eventTs, afterTs)
       if (history) {
-        prompt = `Previous messages in this Slack thread:\n${history}\n\nLatest message: ${prompt}`
+        const label = afterTs ? "New messages in thread since last turn" : "Previous messages in this Slack thread"
+        prompt = `${label}:\n${history}\n\nLatest message: ${prompt}`
       }
     }
 
@@ -306,6 +310,7 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
       channelId,
       threadTs: slackThreadTs,
       userId,
+      eventTs,
       message: prompt,
       systemPrompt: buildOrchestratorSystemPrompt(userId),
       subagentSystemPrompt: buildSubagentSystemPrompt(userId),
