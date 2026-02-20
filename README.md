@@ -2,7 +2,7 @@
 
 # janebot
 
-Jane is a Slack bot powered by [Pi](https://github.com/badlogic/pi-mono). She has opinions and won't say "Great question!".
+Jane is a Slack bot that orchestrates long-lived coding subagents in Sprites. She has opinions and won't say "Great question!".
 
 [SOUL.md](./SOUL.md) defines her personality. [docs/threads.md](./docs/threads.md) explains the thread model. [docs/security-model.md](./docs/security-model.md) covers isolation, credentials, and what Jane can and can't do.
 
@@ -22,6 +22,14 @@ pnpm dev
 
 Mention `@janebot` in a channel or DM her.
 
+## Architecture
+
+- Top-level Jane is a persistent Pi orchestrator session per Slack thread.
+- Host orchestrator runs with no built-in file/shell tools and delegates via `run_coding_subagent`.
+- Each Slack thread gets a sticky coding subagent session in a dedicated Sprite.
+- Follow-up messages in the same Slack thread continue the same Pi session.
+- Use `/status` in a thread to inspect subagent status, and `/abort` to stop a running coding job.
+
 ## Config
 
 | Variable | What it does |
@@ -31,6 +39,7 @@ Mention `@janebot` in a channel or DM her.
 | `ANTHROPIC_API_KEY` | From your Anthropic account |
 | `WORKSPACE_DIR` | Where Jane works |
 | `PI_MODEL` | LLM model (optional, defaults to claude-opus-4-6) |
+| `JANE_LOG_LEVEL` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `ALLOWED_USER_IDS` | Who can talk to her |
 | `ALLOWED_CHANNEL_IDS` | Where she listens |
 

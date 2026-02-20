@@ -1,54 +1,38 @@
 # Thread Model
 
-Jane uses a **stateless execution model** — each message gets a fresh Amp session with Slack thread history as context.
+Jane uses a **persistent subagent session model**.
 
 ## How It Works
 
 ```
-Slack Thread (thread_ts)  →  Fresh Amp Session
-         ↓                          ↓
-   User messages              Slack history fetched
-   + Jane's replies           and included in prompt
+Slack Thread (channel + thread_ts)  →  Subagent Session ID (sa_xxx)  →  Dedicated Sprite
 ```
 
 When a user sends a message in a Slack thread, Jane:
-1. Fetches the full thread history from Slack (including her own previous replies)
-2. Formats it as a conversation transcript
-3. Sends it as context with the new message to a fresh Amp session
+1. Continues the thread's host orchestrator Pi session
+2. The orchestrator decides whether to delegate coding via `run_coding_subagent`
+3. Delegated work runs in the same long-lived Pi session in that thread's Sprite
+4. Jane returns the synthesized result back to Slack
 
-There is no Amp thread continuation — Slack is the source of truth for conversation context.
+## Why Persistent Sessions?
 
-## Why Stateless?
+The previous stateless model reset execution state every turn. That improved isolation but hurt responsiveness and deep iterative coding workflows.
 
-The previous model mapped each Slack thread to a persistent Amp thread. This caused issues:
-- Amp threads accumulated error history that confused the LLM
-- Sprites (sandboxed VMs) referenced by sessions would die, causing 404 errors
-- Stale amp binaries in long-lived sprites lacked new features
-- Session state drifted between components
+The new model keeps coding context alive per thread, which improves:
+- Turn-to-turn speed
+- Ability to iterate over multi-step code changes
+- Continuity of repo state, test results, and tool context
 
-The stateless model eliminates all of these problems. Each request gets a clean environment with fresh context from Slack.
+## Control Commands
 
-## Thread Context Format
+Inside a Slack thread:
+- `/status` shows current subagent state and IDs
+- `/abort` requests that the running Pi process is stopped
 
-Messages are formatted as:
-```
-Previous messages in this Slack thread:
-[U0A3UC8JALF]: what can you tell me about our API?
-[Jane]: The API uses REST with JSON responses...
-[U0A3UC8JALF]: what about authentication?
+## Session Identity
 
-Latest message: how do we handle token refresh?
-```
+Each Slack thread maps to:
+- a stable host orchestrator session
+- a stable `subagent_session_id` and Sprite name derived from `(channel_id, thread_ts)`
 
-Jane's own replies are labelled `[Jane]` and user messages use their Slack user ID.
-
-## Tools Available
-
-Jane can use these Amp tools for thread operations:
-
-- **`find_thread`** — Search threads by keywords or file changes
-- **`read_thread`** — Read content from a thread by ID
-
-Example queries Jane can handle:
-- "Find my threads about the database migration"
-- "What did we discuss last time about auth?"
+This enables follow-up messages to continue the same coding session without replaying full thread history each turn.

@@ -1,13 +1,10 @@
-import { SpritesClient } from "./sprites.js"
 import { config } from "./config.js"
 import * as log from "./logger.js"
-import { acquireRunner, PI_BIN, SPRITE_NODE_PREFIX } from "./sprite-runners.js"
+import { acquireRunner } from "./sprite-runners.js"
+import { getSandboxClient } from "./sandbox.js"
 import { getGitHubToken } from "./github-app.js"
 
 const DEBUG_PI_OUTPUT = process.env.DEBUG_PI_OUTPUT === "1"
-
-// Sprite's default PATH — stable after checkpoint, no need to query each time
-const SPRITE_PATH = `${SPRITE_NODE_PREFIX}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
@@ -111,18 +108,13 @@ export function parsePiOutput(stdout: string): {
 export async function executeInSprite(
   options: SpriteExecutorOptions
 ): Promise<SpriteExecutorResult> {
-  const token = config.spritesToken
-  if (!token) {
-    throw new Error("SPRITES_TOKEN not configured")
-  }
-
-  const spritesClient = new SpritesClient(token)
+  const sandboxClient = getSandboxClient()
   const { name: spriteName, release } = await acquireRunner()
 
   try {
     log.info("Acquired runner", { sprite: spriteName })
 
-    const args: string[] = [PI_BIN, "--mode", "json", "--no-session"]
+    const args: string[] = [sandboxClient.piBin, "--mode", "json", "--no-session"]
     if (config.piModel) {
       args.push("--model", config.piModel)
     }
@@ -130,9 +122,8 @@ export async function executeInSprite(
       args.push("--thinking", config.piThinkingLevel)
     }
 
-    // Build env — use the known sprite PATH (stable after checkpoint)
     const env: Record<string, string> = {
-      PATH: SPRITE_PATH,
+      PATH: sandboxClient.defaultPath,
       HOME: "/home/sprite",
       NO_COLOR: "1",
       TERM: "dumb",
@@ -152,7 +143,7 @@ export async function executeInSprite(
     if (options.systemPrompt) {
       const agentsContent = options.systemPrompt.replace(/'/g, "'\\''")
       setupTasks.push(
-        spritesClient.exec(spriteName, [
+        sandboxClient.exec(spriteName, [
           "bash", "-c",
           `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
         ], { timeoutMs: 30000 }).then(() => {})
@@ -161,7 +152,7 @@ export async function executeInSprite(
 
     // Clean artifacts dir before each run
     setupTasks.push(
-      spritesClient.exec(spriteName, [
+      sandboxClient.exec(spriteName, [
         "bash", "-c",
         "rm -rf /home/sprite/artifacts && mkdir -p /home/sprite/artifacts",
       ], { timeoutMs: 10000 }).then(() => {})
@@ -177,7 +168,7 @@ export async function executeInSprite(
       }
       if (githubToken) {
         // gh auth — pass token via stdin to avoid exposing in process list
-        const authResult = await spritesClient.exec(spriteName, [
+        const authResult = await sandboxClient.exec(spriteName, [
           "gh", "auth", "login", "--with-token",
         ], { stdin: githubToken, timeoutMs: 30000 })
         if (authResult.exitCode !== 0) {
@@ -195,7 +186,7 @@ export async function executeInSprite(
           gitConfigParts.push(`git config --global user.email '${config.gitAuthorEmail.replace(/'/g, "'\\''")}'`)
         }
         if (gitConfigParts.length > 0) {
-          await spritesClient.exec(spriteName, [
+          await sandboxClient.exec(spriteName, [
             "bash", "-c", gitConfigParts.join(" && "),
           ], { timeoutMs: 10000 })
         }
@@ -211,7 +202,7 @@ export async function executeInSprite(
       timeoutMs: EXEC_TIMEOUT_MS,
     })
 
-    const result = await spritesClient.exec(spriteName, args, {
+    const result = await sandboxClient.exec(spriteName, args, {
       env,
       stdin: options.prompt + "\n",
       timeoutMs: EXEC_TIMEOUT_MS,
@@ -242,7 +233,7 @@ export async function executeInSprite(
 
     // Collect artifacts
     const generatedFiles: GeneratedFile[] = []
-    const artifactResult = await spritesClient.exec(spriteName,
+    const artifactResult = await sandboxClient.exec(spriteName,
       ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2", "-size", "-10M"],
       { timeoutMs: 10000 })
     const artifactPaths = artifactResult.stdout.trim().split("\n").filter(Boolean)
@@ -257,7 +248,7 @@ export async function executeInSprite(
       // Download file data now, before the runner is released and checkpoint restored
       let data: Buffer | undefined
       try {
-        data = await spritesClient.downloadFile(spriteName, artifactPath)
+        data = await sandboxClient.downloadFile(spriteName, artifactPath)
       } catch (err) {
         log.warn("Failed to download artifact", { path: artifactPath, error: err instanceof Error ? err.message : String(err) })
       }

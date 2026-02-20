@@ -2,3 +2,15 @@
 node = "22.22.0"
 pnpm = "10.29.3"
 flyctl = "0.4.11"
+
+[tasks.dev]
+run = "pnpm dev"
+
+[tasks.build]
+run = "pnpm build"
+
+[tasks.typecheck]
+run = "pnpm typecheck"
+
+[tasks.test]
+run = "pnpm test"
