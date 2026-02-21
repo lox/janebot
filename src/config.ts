@@ -37,9 +37,10 @@ function parseList(value: string | undefined): string[] {
 }
 
 function parseSandboxBackend(): "sprites" | "docker" {
-  const value = (process.env.SANDBOX_BACKEND ?? "").toLowerCase()
+  const value = (process.env.SANDBOX_BACKEND ?? "").trim().toLowerCase()
+  if (value === "" || value === "docker") return "docker"
   if (value === "sprites") return "sprites"
-  return "docker"
+  throw new Error(`Invalid SANDBOX_BACKEND: ${value}. Expected \"docker\" or \"sprites\".`)
 }
 
 export const config: JanebotConfig = {

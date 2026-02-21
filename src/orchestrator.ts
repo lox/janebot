@@ -8,7 +8,7 @@ import {
 
 import { config } from "./config.js"
 import { runCodingSubagent, type RunCodingSubagentResult } from "./coding-subagent.js"
-import type { GeneratedFile } from "./sandbox-executor.js"
+import type { GeneratedFile } from "./pi-output.js"
 import * as log from "./logger.js"
 
 interface OrchestratorSession {

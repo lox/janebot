@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "crypto"
 import { config } from "./config.js"
 import { getGitHubToken } from "./github-app.js"
 import * as log from "./logger.js"
-import { parsePiOutput, type GeneratedFile } from "./sandbox-executor.js"
+import { parsePiOutput, type GeneratedFile } from "./pi-output.js"
 import { getSandboxClient, getSandboxName, type SandboxClient, type SandboxNetworkPolicyRule } from "./sandbox.js"
 import { getSessionStore, type PersistedSubagentSession } from "./session-store.js"
 
@@ -608,34 +608,6 @@ export interface RunCodingSubagentResult {
   generatedFiles: GeneratedFile[]
 }
 
-function rehydrateSession(client: SandboxClient, channelId: string, threadTs: string): SubagentSession {
-  const existing = getSessionByThread(channelId, threadTs)
-  if (existing) return existing
-
-  const threadKey = makeThreadKey(channelId, threadTs)
-  const subagentSessionId = makeSubagentSessionId(threadKey)
-  const sandboxName = getSandboxName(channelId, threadTs)
-
-  const session: SubagentSession = {
-    id: subagentSessionId,
-    key: threadKey,
-    channelId,
-    threadTs,
-    sandboxName,
-    piSessionFile: `${sessionsDir(client)}/${subagentSessionId}.jsonl`,
-    status: "idle",
-    turns: 0,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }
-
-  cacheSession(session)
-  persistSession(session)
-  log.debug("Rehydrated subagent session from deterministic keys", { subagentSessionId, sandboxName })
-
-  return session
-}
-
 function resolveSessionFromInput(
   input:
     | RunCodingSubagentMessageInput
@@ -669,13 +641,7 @@ export async function runCodingSubagent(
   }
 
   if (input.action === "status") {
-    let session = resolveSessionFromInput(input)
-    if (!session && input.channelId && input.threadTs) {
-      const sandbox = await client.get(getSandboxName(input.channelId, input.threadTs))
-      if (sandbox) {
-        session = rehydrateSession(client, input.channelId, input.threadTs)
-      }
-    }
+    const session = resolveSessionFromInput(input)
     if (!session) {
       return { status: "not_found", generatedFiles: [] }
     }
@@ -689,13 +655,7 @@ export async function runCodingSubagent(
   }
 
   if (input.action === "abort") {
-    let session = resolveSessionFromInput(input)
-    if (!session && input.channelId && input.threadTs) {
-      const sandbox = await client.get(getSandboxName(input.channelId, input.threadTs))
-      if (sandbox) {
-        session = rehydrateSession(client, input.channelId, input.threadTs)
-      }
-    }
+    const session = resolveSessionFromInput(input)
     if (!session) {
       return { status: "not_found", generatedFiles: [] }
     }
