@@ -16,9 +16,7 @@ When a user sends a message in a Slack thread, Jane:
 
 ## Why Persistent Sessions?
 
-The previous stateless model reset execution state every turn. That improved isolation but hurt responsiveness and deep iterative coding workflows.
-
-The new model keeps coding context alive per thread, which improves:
+Keeping coding context alive per thread improves:
 - Turn-to-turn speed
 - Ability to iterate over multi-step code changes
 - Continuity of repo state, test results, and tool context

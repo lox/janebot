@@ -54,18 +54,6 @@ const MIGRATIONS: Migration[] = [
       `)
     },
   },
-  {
-    version: 2,
-    description: "Rename sprite_name column to sandbox_name",
-    apply(db) {
-      if (
-        hasColumn(db, "subagent_sessions", "sprite_name") &&
-        !hasColumn(db, "subagent_sessions", "sandbox_name")
-      ) {
-        db.exec("ALTER TABLE subagent_sessions RENAME COLUMN sprite_name TO sandbox_name;")
-      }
-    },
-  },
 ]
 
 type SessionRow = {
@@ -244,11 +232,4 @@ function mapRow(row: SessionRow): PersistedSubagentSession {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
-}
-
-function hasColumn(db: DatabaseSync, tableName: string, columnName: string): boolean {
-  const rows = db
-    .prepare(`PRAGMA table_info(${tableName})`)
-    .all() as Array<{ name: string }>
-  return rows.some((row) => row.name === columnName)
 }

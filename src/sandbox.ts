@@ -1,8 +1,8 @@
 /**
  * SandboxClient interface — abstraction over container backends.
  *
- * Provides container lifecycle, command execution, checkpoint/restore,
- * and file access. Implementations live in sprites.ts and docker-sandbox.ts.
+ * Provides container lifecycle, command execution, and file access.
+ * Implementations live in sprites.ts and docker-sandbox.ts.
  */
 
 import { createHash } from "crypto"
@@ -17,11 +17,6 @@ export interface SandboxExecResult {
   stdout: string
   stderr: string
   exitCode: number
-}
-
-export interface SandboxCheckpoint {
-  id: string
-  comment?: string
 }
 
 export interface SandboxNetworkPolicyRule {
@@ -53,9 +48,6 @@ export interface SandboxClient {
   exec(name: string, command: string[], options?: SandboxExecOptions): Promise<SandboxExecResult>
   downloadFile(name: string, path: string): Promise<Buffer>
   list(prefix?: string): Promise<SandboxInfo[]>
-  listCheckpoints(name: string): Promise<SandboxCheckpoint[]>
-  createCheckpoint(name: string, comment?: string): Promise<string>
-  restoreCheckpoint(name: string, checkpointId: string): Promise<void>
   setNetworkPolicy(name: string, rules: SandboxNetworkPolicyRule[]): Promise<void>
 }
 

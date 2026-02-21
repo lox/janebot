@@ -4,13 +4,12 @@
  * This is a lightweight REST client since the official @fly/sprites SDK
  * requires Node.js 24+. We only need create, exec, delete, and policy APIs.
  *
- * Uses WebSocket exec API for long-running commands (amp execution can take minutes).
+ * Uses WebSocket exec API for long-running commands (pi execution can take minutes).
  *
  * @see https://sprites.dev/api
  * @see https://sprites.dev/api/sprites/exec
  */
 
-import { createHash } from "crypto"
 import WebSocket from "ws"
 import * as log from "./logger.js"
 import type { SandboxClient } from "./sandbox.js"
@@ -40,13 +39,6 @@ export interface ExecResult {
 export interface NetworkPolicyRule {
   action: "allow" | "deny"
   domain: string
-}
-
-export interface Checkpoint {
-  id: string
-  create_time: string
-  source_id?: string
-  comment?: string
 }
 
 export class SpritesClient implements SandboxClient {
@@ -124,17 +116,6 @@ export class SpritesClient implements SandboxClient {
   }
 
   /**
-   * Generate a deterministic sprite name from a Slack thread.
-   */
-  static getSpriteName(channelId: string, threadTs: string): string {
-    const hash = createHash("sha256")
-      .update(`${channelId}:${threadTs}`)
-      .digest("hex")
-      .slice(0, 12)
-    return `jane-${hash}`
-  }
-
-  /**
    * Get sprite info. Returns null if not found.
    */
   async get(name: string): Promise<SpriteInfo | null> {
@@ -169,42 +150,6 @@ export class SpritesClient implements SandboxClient {
   async delete(name: string): Promise<void> {
     log.info("Deleting sprite", { name })
     await this.request<void>("DELETE", `/v1/sprites/${name}`)
-  }
-
-  /**
-   * Get or create a sprite for a Slack thread.
-   */
-  async getOrCreate(channelId: string, threadTs: string): Promise<SpriteInfo> {
-    const name = SpritesClient.getSpriteName(channelId, threadTs)
-    const existing = await this.get(name)
-    if (existing) {
-      return existing
-    }
-
-    const sprite = await this.create(name)
-
-    // Apply default network policy - amp needs access to its API and LLM providers
-    await this.setNetworkPolicy(name, [
-      // Amp CLI and API
-      { action: "allow", domain: "ampcode.com" },
-      { action: "allow", domain: "*.ampcode.com" },
-      { action: "allow", domain: "storage.googleapis.com" },
-      { action: "allow", domain: "*.storage.googleapis.com" },
-      // LLM APIs (direct and via Amp proxy)
-      { action: "allow", domain: "api.anthropic.com" },
-      { action: "allow", domain: "api.openai.com" },
-      // CDN/infrastructure that amp might use
-      { action: "allow", domain: "*.cloudflare.com" },
-      { action: "allow", domain: "*.googleapis.com" },
-      // GitHub API and web access
-      { action: "allow", domain: "github.com" },
-      { action: "allow", domain: "*.github.com" },
-      { action: "allow", domain: "api.github.com" },
-      { action: "allow", domain: "raw.githubusercontent.com" },
-      { action: "allow", domain: "objects.githubusercontent.com" },
-    ])
-
-    return sprite
   }
 
   /**
@@ -425,150 +370,5 @@ export class SpritesClient implements SandboxClient {
     }
 
     return Buffer.from(result.stdout.trim(), "base64")
-  }
-
-  /**
-   * Clean up old sprites (inactive for more than maxAgeDays).
-   */
-  async cleanup(maxAgeDays = 7): Promise<number> {
-    const sprites = await this.list("jane-")
-    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
-    let deleted = 0
-
-    for (const sprite of sprites) {
-      const updatedAt = new Date(sprite.updated_at).getTime()
-      if (updatedAt < cutoff) {
-        try {
-          await this.delete(sprite.name)
-          deleted++
-        } catch (e) {
-          log.error("Failed to delete sprite", e)
-        }
-      }
-    }
-
-    return deleted
-  }
-
-  /**
-   * List checkpoints for a sprite.
-   */
-  async listCheckpoints(name: string): Promise<Checkpoint[]> {
-    return this.request<Checkpoint[]>("GET", `/v1/sprites/${name}/checkpoints`)
-  }
-
-  /**
-   * Create a checkpoint of the current sprite state.
-   * Returns when complete (consumes the NDJSON stream).
-   */
-  async createCheckpoint(name: string, comment?: string): Promise<string> {
-    log.info("Creating checkpoint", { name, comment })
-
-    const url = `${this.baseUrl}/v1/sprites/${name}/checkpoint`
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ comment }),
-    })
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`Checkpoint failed: ${response.status}: ${text}`)
-    }
-
-    // Parse NDJSON stream to find completion
-    const text = await response.text()
-    const lines = text.split("\n").filter((l) => l.trim())
-    let checkpointId = ""
-
-    for (const line of lines) {
-      try {
-        const msg = JSON.parse(line)
-        if (msg.type === "complete" && msg.data) {
-          // Extract checkpoint ID from "Checkpoint v3 created successfully"
-          const match = msg.data.match(/Checkpoint\s+(v\d+)/i)
-          if (match) {
-            checkpointId = match[1]
-          }
-        }
-        if (msg.type === "error") {
-          throw new Error(msg.error)
-        }
-      } catch (e) {
-        if (e instanceof SyntaxError) continue
-        throw e
-      }
-    }
-
-    log.info("Checkpoint created", { name, checkpointId })
-    return checkpointId
-  }
-
-  /**
-   * Restore a sprite to a checkpoint.
-   * Returns when complete (consumes the NDJSON stream).
-   */
-  async restoreCheckpoint(name: string, checkpointId: string): Promise<void> {
-    log.info("Restoring checkpoint", { name, checkpointId })
-
-    const url = `${this.baseUrl}/v1/sprites/${name}/checkpoints/${checkpointId}/restore`
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-    })
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`Restore failed: ${response.status}: ${text}`)
-    }
-
-    // Consume NDJSON stream
-    const text = await response.text()
-    const lines = text.split("\n").filter((l) => l.trim())
-
-    for (const line of lines) {
-      try {
-        const msg = JSON.parse(line)
-        if (msg.type === "error") {
-          throw new Error(msg.error)
-        }
-      } catch (e) {
-        if (e instanceof SyntaxError) continue
-        throw e
-      }
-    }
-
-    log.info("Checkpoint restored", { name, checkpointId })
-  }
-
-  /**
-   * Copy a sprite's checkpoint to a new sprite.
-   * Creates the new sprite and restores from the source's checkpoint.
-   */
-  async cloneFromCheckpoint(
-    sourceName: string,
-    checkpointId: string,
-    newName: string
-  ): Promise<SpriteInfo> {
-    log.info("Cloning sprite from checkpoint", {
-      source: sourceName,
-      checkpoint: checkpointId,
-      target: newName,
-    })
-
-    // Create new sprite
-    const sprite = await this.create(newName)
-
-    // Restore checkpoint from source
-    // Note: This requires the checkpoint to be from the SAME sprite
-    // The API doesn't support cross-sprite checkpoint restore directly
-    // So we need a different approach - see ensureGoldenSprite
-
-    return sprite
   }
 }

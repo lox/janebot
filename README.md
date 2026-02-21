@@ -43,7 +43,7 @@ Mention `@janebot` in a channel or DM her.
 | `SESSION_DB_PATH` | SQLite file for persistent session mappings |
 | `PI_MODEL` | LLM model (optional, defaults to claude-opus-4-6) |
 | `JANE_LOG_LEVEL` | Log verbosity (`debug`, `info`, `warn`, `error`) |
-| `SANDBOX_BACKEND` | `docker` (default) or `sprites` |
+| `SANDBOX_BACKEND` | `docker` (default) or `sprites` (invalid values fail startup) |
 | `SPRITES_TOKEN` | Required when `SANDBOX_BACKEND=sprites` |
 | `ALLOWED_USER_IDS` | Who can talk to her |
 | `ALLOWED_CHANNEL_IDS` | Where she listens |

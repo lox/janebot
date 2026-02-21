@@ -1,8 +1,7 @@
 /**
  * Docker-based SandboxClient implementation.
  *
- * Uses local Docker daemon to run containers. Checkpoints use `docker commit`
- * to save state as images and `docker rm` + `docker run` to restore.
+ * Uses local Docker daemon to run containers.
  *
  * Network policy is a no-op — containers have full network access.
  */
@@ -12,7 +11,6 @@ import * as log from "./logger.js"
 import type {
   SandboxClient,
   SandboxInfo,
-  SandboxCheckpoint,
   SandboxExecOptions,
   SandboxExecResult,
   SandboxNetworkPolicyRule,
@@ -208,44 +206,6 @@ export class DockerSandboxClient implements SandboxClient {
           status: (state === "running" ? "running" : "cold") as SandboxInfo["status"],
         }
       })
-  }
-
-  async listCheckpoints(name: string): Promise<SandboxCheckpoint[]> {
-    const result = await this.docker(["images", "--format", "{{.Tag}}", name])
-    if (result.exitCode !== 0 || !result.stdout.trim()) return []
-
-    return result.stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((tag) => ({ id: tag, comment: tag }))
-  }
-
-  async createCheckpoint(name: string, comment?: string): Promise<string> {
-    const tag = comment ?? `ckpt-${Date.now()}`
-    log.info("Creating Docker checkpoint (commit)", { name, tag })
-    const result = await this.docker(["commit", name, `${name}:${tag}`], {
-      timeoutMs: 120000,
-    })
-    if (result.exitCode !== 0) {
-      throw new Error(`Docker commit failed: ${result.stderr}`)
-    }
-    log.info("Docker checkpoint created", { name, tag })
-    return tag
-  }
-
-  async restoreCheckpoint(name: string, checkpointId: string): Promise<void> {
-    log.info("Restoring Docker checkpoint", { name, checkpointId })
-    await this.docker(["rm", "-f", name], { timeoutMs: 10000 })
-
-    const result = await this.docker(
-      ["run", "-d", "--name", name, `${name}:${checkpointId}`, "sleep", "infinity"],
-      { timeoutMs: 60000 }
-    )
-    if (result.exitCode !== 0) {
-      throw new Error(`Docker restore failed: ${result.stderr}`)
-    }
-    log.info("Docker checkpoint restored", { name, checkpointId })
   }
 
   async setNetworkPolicy(

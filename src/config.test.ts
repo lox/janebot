@@ -52,4 +52,22 @@ describe("config shape", () => {
     assert.ok(config.piThinkingLevel === undefined || typeof config.piThinkingLevel === "string")
     assert.ok(typeof config.debounceMs === "number")
   })
+
+  it("fails fast for invalid SANDBOX_BACKEND values", async () => {
+    const previous = process.env.SANDBOX_BACKEND
+    process.env.SANDBOX_BACKEND = "invalid"
+
+    try {
+      await assert.rejects(
+        import(`./config.js?invalid_backend=${Date.now()}`),
+        /Invalid SANDBOX_BACKEND/
+      )
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SANDBOX_BACKEND
+      } else {
+        process.env.SANDBOX_BACKEND = previous
+      }
+    }
+  })
 })

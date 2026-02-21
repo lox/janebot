@@ -3,7 +3,7 @@ import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 import { runCodingSubagent } from "./coding-subagent.js"
 import { runOrchestratorTurn } from "./orchestrator.js"
-import type { GeneratedFile } from "./sandbox-executor.js"
+import type { GeneratedFile } from "./pi-output.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const soulPath = join(__dirname, "..", "SOUL.md")
