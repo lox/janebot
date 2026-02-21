@@ -3,9 +3,17 @@ import { App, LogLevel } from "@slack/bolt"
 
 import { config, isUserAllowed, isChannelAllowed } from "./config.js"
 import { debounce, cancel } from "./debouncer.js"
+import {
+  clearFollowUpQueue,
+  drainFollowUpBatch,
+  enqueueFollowUp,
+  getFollowUpCount,
+  summarizeFollowUpBatch,
+} from "./follow-up-queue.js"
 import { markdownToSlack } from "md-to-slack"
 import * as log from "./logger.js"
 import { getLastSeenEventTs } from "./orchestrator.js"
+import { buildInitialPendingTurn, type PendingTurn } from "./pending-turn.js"
 import type { GeneratedFile } from "./pi-output.js"
 import { initSandboxClient, getSandboxClient } from "./sandbox.js"
 import { initSessionStore } from "./session-store.js"
@@ -13,9 +21,13 @@ import { SpritesClient } from "./sprites.js"
 import { DockerSandboxClient } from "./docker-sandbox.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 import { extractControlCommand, hasSoulPrompt, runControlCommand, runThreadTurn } from "./thread-runtime.js"
+import { formatThreadHistory, type ThreadHistoryMessage } from "./thread-history.js"
+import { isExpectedCancellationError } from "./cancellation.js"
 
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
+const debouncingKeyBySession = new Map<string, string>()
+const debouncedEventTsByKey = new Map<string, string[]>()
 
 // Initialize Slack app in Socket Mode
 const app = new App({
@@ -41,38 +53,26 @@ async function fetchThreadContext(
   threadTs: string,
   botUserId: string | undefined,
   beforeTs: string,
-  afterTs?: string
+  afterTs?: string,
+  excludedEventTs: readonly string[] = []
 ): Promise<string | null> {
   try {
     const result = await client.conversations.replies({
       channel,
       ts: threadTs,
       limit: 50,
+      latest: beforeTs,
+      inclusive: false,
+      ...(afterTs ? { oldest: afterTs } : {}),
     })
 
-    if (!result.messages || result.messages.length <= 1) {
-      return null
-    }
-
-    const formatted = result.messages
-      .filter((m) => {
-        if (Number(m.ts) >= Number(beforeTs)) return false
-        if (afterTs && Number(m.ts) <= Number(afterTs)) return false
-        return true
-      })
-      .map((m) => {
-        const isBot = m.user === botUserId || "bot_id" in m
-        const label = isBot ? "Jane" : m.user
-        const text = m.text?.replace(/<@[A-Z0-9]+>/g, "").trim() || ""
-        return `[${label}]: ${text}`
-      })
-      .filter((line) => {
-        const afterColon = line.split(": ").slice(1).join(": ")
-        return afterColon.length > 0
-      })
-      .join("\n")
-
-    return formatted || null
+    return formatThreadHistory({
+      messages: result.messages as ThreadHistoryMessage[] | undefined,
+      botUserId,
+      beforeTs,
+      afterTs,
+      excludedEventTs,
+    })
   } catch (error) {
     log.error("Failed to fetch thread history", error)
     return null
@@ -134,6 +134,82 @@ interface ProcessMessageParams {
   say: (args: { text: string; thread_ts: string }) => Promise<unknown>
 }
 
+async function executePendingTurn(params: {
+  turn: PendingTurn
+  channelId: string
+  slackThreadTs: string
+  client: typeof app.client
+  say: (args: { text: string; thread_ts: string }) => Promise<unknown>
+}): Promise<void> {
+  const { turn, channelId, slackThreadTs, client, say } = params
+
+  let prompt = turn.message
+  if (turn.includeThreadHistory && turn.isInThread) {
+    const botUserId = await getBotUserId(client)
+    const afterTs = getLastSeenEventTs(channelId, slackThreadTs)
+    const history = await fetchThreadContext(
+      client,
+      channelId,
+      slackThreadTs,
+      botUserId,
+      turn.eventTs,
+      afterTs,
+      turn.excludedHistoryEventTs,
+    )
+    if (history) {
+      const label = afterTs ? "New messages in thread since last turn" : "Previous messages in this Slack thread"
+      prompt = `${label}:\n${history}\n\nLatest message: ${prompt}`
+    }
+  }
+
+  log.request(turn.type, turn.userId, channelId, prompt)
+  const startedAt = Date.now()
+
+  const result = await runThreadTurn({
+    channelId,
+    threadTs: slackThreadTs,
+    userId: turn.userId,
+    eventTs: turn.eventTs,
+    message: prompt,
+    progressCallback: async (message) => {
+      log.debug("Posting orchestrator progress update", {
+        channelId,
+        threadTs: slackThreadTs,
+        message,
+      })
+      await say({
+        text: message,
+        thread_ts: slackThreadTs,
+      })
+    },
+  })
+
+  let uploadErrors: string[] = []
+  if (result.generatedFiles.length) {
+    uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
+  }
+
+  let content = result.content || "Done."
+  if (uploadErrors.length > 0) {
+    content += `\n\n_Note: ${uploadErrors.join("; ")}_`
+  }
+
+  const formatted = cleanSlackMessage(markdownToSlack(content))
+  await sendChunkedResponse(say, formatted, slackThreadTs)
+
+  log.response(turn.type, turn.userId, Date.now() - startedAt, true)
+
+  for (const timestamp of turn.eventTimestamps) {
+    await client.reactions
+      .add({
+        channel: channelId,
+        timestamp,
+        name: "white_check_mark",
+      })
+      .catch(() => {})
+  }
+}
+
 async function processMessage(params: ProcessMessageParams): Promise<void> {
   const {
     type,
@@ -161,7 +237,27 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
   const sessionKey = `${channelId}:${slackThreadTs}`
 
   if (inFlight.has(sessionKey)) {
-    debounce(debounceKey, rawText)
+    const activeDebounceKey = debouncingKeyBySession.get(sessionKey)
+    if (activeDebounceKey === debounceKey) {
+      // While the first turn is still waiting on debounce, same-user messages should keep batching.
+      const pendingEventTs = debouncedEventTsByKey.get(debounceKey) ?? []
+      pendingEventTs.push(eventTs)
+      debouncedEventTsByKey.set(debounceKey, pendingEventTs)
+      void debounce(debounceKey, rawText)
+      return
+    }
+
+    enqueueFollowUp(sessionKey, {
+      type,
+      userId,
+      eventTs,
+      rawText,
+      isInThread,
+    })
+    log.debug("Queued follow-up while turn is running", {
+      sessionKey,
+      queuedCount: getFollowUpCount(sessionKey),
+    })
     return
   }
 
@@ -173,81 +269,120 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
     })
     .catch(() => {})
 
-  const startTime = Date.now()
+  const runStartedAt = Date.now()
+  let activeTurn: PendingTurn | undefined
+  let activeTurnStartedAt = runStartedAt
 
   try {
     inFlight.add(sessionKey)
 
-    let prompt = await debounce(debounceKey, rawText)
+    debouncingKeyBySession.set(sessionKey, debounceKey)
+    debouncedEventTsByKey.set(debounceKey, [eventTs])
+    const initialMessage = await debounce(debounceKey, rawText)
+    const initialEventTimestamps = debouncedEventTsByKey.get(debounceKey) ?? [eventTs]
+    debouncingKeyBySession.delete(sessionKey)
+    debouncedEventTsByKey.delete(debounceKey)
 
-    if (isInThread) {
-      const botUserId = await getBotUserId(client)
-      const afterTs = getLastSeenEventTs(channelId, slackThreadTs)
-      const history = await fetchThreadContext(client, channelId, slackThreadTs, botUserId, eventTs, afterTs)
-      if (history) {
-        const label = afterTs ? "New messages in thread since last turn" : "Previous messages in this Slack thread"
-        prompt = `${label}:\n${history}\n\nLatest message: ${prompt}`
-      }
-    }
-
-    log.request(type, userId, channelId, prompt)
-
-    const result = await runThreadTurn({
-      channelId,
-      threadTs: slackThreadTs,
+    activeTurn = buildInitialPendingTurn({
+      type,
       userId,
-      eventTs,
-      message: prompt,
-      progressCallback: async (message) => {
-        log.debug("Posting orchestrator progress update", {
-          channelId,
-          threadTs: slackThreadTs,
-          message,
-        })
-        await say({
-          text: message,
-          thread_ts: slackThreadTs,
-        })
-      },
+      eventTimestamps: initialEventTimestamps,
+      fallbackEventTs: eventTs,
+      message: initialMessage,
+      isInThread,
     })
 
-    let uploadErrors: string[] = []
-    if (result.generatedFiles.length) {
-      uploadErrors = await uploadGeneratedFiles(client, result.generatedFiles, channelId, slackThreadTs)
-    }
-
-    let content = result.content || "Done."
-    if (uploadErrors.length > 0) {
-      content += `\n\n_Note: ${uploadErrors.join("; ")}_`
-    }
-
-    const formatted = cleanSlackMessage(markdownToSlack(content))
-    await sendChunkedResponse(say, formatted, slackThreadTs)
-
-    log.response(type, userId, Date.now() - startTime, true)
-
-    await client.reactions
-      .add({
-        channel: channelId,
-        timestamp: eventTs,
-        name: "white_check_mark",
+    while (activeTurn) {
+      activeTurnStartedAt = Date.now()
+      await executePendingTurn({
+        turn: activeTurn,
+        channelId,
+        slackThreadTs,
+        client,
+        say,
       })
-      .catch(() => {})
+
+      const queuedBatch = drainFollowUpBatch(sessionKey)
+      if (queuedBatch.length === 0) {
+        activeTurn = undefined
+        break
+      }
+
+      log.debug("Draining queued follow-up messages", {
+        sessionKey,
+        queuedCount: queuedBatch.length,
+      })
+
+      const latestQueued = queuedBatch[queuedBatch.length - 1]
+      if (!latestQueued) {
+        activeTurn = undefined
+        break
+      }
+
+      // If summarisation fails, keep error attribution on the latest queued message instead of the initial turn.
+      activeTurn = {
+        type: latestQueued.type,
+        userId: latestQueued.userId,
+        eventTs: latestQueued.eventTs,
+        eventTimestamps: [latestQueued.eventTs],
+        message: latestQueued.rawText,
+        isInThread: latestQueued.isInThread,
+        includeThreadHistory: latestQueued.isInThread,
+        excludedHistoryEventTs: [latestQueued.eventTs],
+      }
+
+      const nextSummary = summarizeFollowUpBatch(queuedBatch)
+      if (!nextSummary) {
+        activeTurn = undefined
+        break
+      }
+
+      activeTurn = {
+        type: nextSummary.type,
+        userId: nextSummary.userId,
+        eventTs: nextSummary.latestEventTs,
+        eventTimestamps: nextSummary.eventTimestamps,
+        message: nextSummary.message,
+        isInThread: nextSummary.isInThread,
+        includeThreadHistory: nextSummary.includeThreadHistory,
+        excludedHistoryEventTs: nextSummary.excludedHistoryEventTs,
+      }
+    }
   } catch (error) {
+    if (isExpectedCancellationError(error)) {
+      log.warn("Message processing interrupted", {
+        sessionKey,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      cancel(debounceKey)
+      clearFollowUpQueue(sessionKey)
+      return
+    }
+
     log.error("Error processing message", error)
-    log.response(type, userId, Date.now() - startTime, false)
+    if (activeTurn) {
+      log.response(activeTurn.type, activeTurn.userId, Date.now() - activeTurnStartedAt, false)
+    } else {
+      log.response(type, userId, Date.now() - runStartedAt, false)
+    }
     cancel(debounceKey)
+    clearFollowUpQueue(sessionKey)
 
     await say({
       text: formatErrorForUser(error),
       thread_ts: slackThreadTs,
     })
 
-    await client.reactions
-      .add({ channel: channelId, timestamp: eventTs, name: "x" })
-      .catch(() => {})
+    const errorTimestamps = activeTurn?.eventTimestamps ?? [eventTs]
+    for (const timestamp of errorTimestamps) {
+      await client.reactions
+        .add({ channel: channelId, timestamp, name: "x" })
+        .catch(() => {})
+    }
   } finally {
     inFlight.delete(sessionKey)
+    debouncingKeyBySession.delete(sessionKey)
+    debouncedEventTsByKey.delete(debounceKey)
 
     await client.reactions
       .remove({
