@@ -11,10 +11,7 @@ const ARTIFACTS_DIR = "/home/sprite/artifacts"
 const SESSIONS_DIR = "/home/sprite/sessions"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
-const parsedTimeout = parseInt(
-  process.env.SANDBOX_EXEC_TIMEOUT_MS || process.env.SPRITE_EXEC_TIMEOUT_MS || "",
-  10
-)
+const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS

@@ -7,7 +7,7 @@ import { getGitHubToken } from "./github-app.js"
 const DEBUG_PI_OUTPUT = process.env.DEBUG_PI_OUTPUT === "1"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
-const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
+const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
@@ -41,8 +41,6 @@ export interface SandboxExecutorOptions {
   userId: string
 }
 
-export type SpriteExecutorOptions = SandboxExecutorOptions
-
 export interface GeneratedFile {
   path: string
   filename: string
@@ -55,8 +53,6 @@ export interface SandboxExecutorResult {
   sandboxName: string
   generatedFiles: GeneratedFile[]
 }
-
-export type SpriteExecutorResult = SandboxExecutorResult
 
 export function parsePiOutput(stdout: string): {
   content: string
@@ -278,5 +274,3 @@ export async function executeInSandbox(
     log.info("Released runner", { sandbox: sandboxName })
   }
 }
-
-export const executeInSprite = executeInSandbox
