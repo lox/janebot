@@ -9,6 +9,7 @@ import { getSessionStore, type PersistedSubagentSession } from "./session-store.
 const WORK_DIR = "/home/sprite/workspace"
 const ARTIFACTS_DIR = "/home/sprite/artifacts"
 const SESSIONS_DIR = "/home/sprite/sessions"
+const GH_LOCAL_BIN_DIR = "/home/sprite/.local/bin"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
@@ -54,6 +55,67 @@ interface SubagentSession {
 const sessionsByKey = new Map<string, SubagentSession>()
 const sessionsById = new Map<string, SubagentSession>()
 const readySandboxes = new Set<string>()
+
+function ghInstallScript(): string {
+  return [
+    `if ! command -v gh >/dev/null 2>&1 && [ ! -x "${GH_LOCAL_BIN_DIR}/gh" ]; then`,
+    "  set -euo pipefail",
+    "  arch=$(uname -m)",
+    "  case \"$arch\" in",
+    "    x86_64|amd64) gh_arch=\"amd64\" ;;",
+    "    aarch64|arm64) gh_arch=\"arm64\" ;;",
+    "    *) echo \"Unsupported architecture for gh: $arch\" >&2; exit 1 ;;",
+    "  esac",
+    "  gh_tag=$(node -e 'const url = \"https://api.github.com/repos/cli/cli/releases/latest\"; fetch(url).then(async (res) => { if (!res.ok) throw new Error(String(res.status)); const body = await res.json(); process.stdout.write(body.tag_name || \"\"); }).catch((err) => { console.error(err.message); process.exit(1); });')",
+    "  if [ -z \"$gh_tag\" ]; then",
+    "    echo \"Unable to resolve gh release tag\" >&2",
+    "    exit 1",
+    "  fi",
+    "  tmp_dir=$(mktemp -d)",
+    "  trap 'rm -rf \"$tmp_dir\"' EXIT",
+    "  curl -fsSL \"https://github.com/cli/cli/releases/download/${gh_tag}/gh_${gh_tag#v}_linux_${gh_arch}.tar.gz\" -o \"$tmp_dir/gh.tgz\"",
+    "  tar -xzf \"$tmp_dir/gh.tgz\" -C \"$tmp_dir\"",
+    `  mkdir -p ${GH_LOCAL_BIN_DIR}`,
+    "  install \"$tmp_dir/gh_${gh_tag#v}_linux_${gh_arch}/bin/gh\" " + `${GH_LOCAL_BIN_DIR}/gh`,
+    "fi",
+  ].join("\n")
+}
+
+async function ensureGhInstalled(
+  client: SandboxClient,
+  sandboxName: string,
+  context: "bootstrap" | "runtime"
+): Promise<boolean> {
+  const ghExists = await client.exec(sandboxName, [
+    "bash",
+    "-c",
+    `if command -v gh >/dev/null 2>&1 || [ -x "${GH_LOCAL_BIN_DIR}/gh" ]; then exit 0; fi; exit 1`,
+  ], {
+    timeoutMs: 10000,
+  })
+  if (ghExists.exitCode === 0) {
+    return true
+  }
+
+  const ghSetup = await client.exec(sandboxName, [
+    "bash",
+    "-c",
+    ghInstallScript(),
+  ], {
+    timeoutMs: 600000,
+  })
+  if (ghSetup.exitCode !== 0) {
+    log.warn("Failed to install gh in subagent sandbox", {
+      sandbox: sandboxName,
+      context,
+      exitCode: ghSetup.exitCode,
+      stderr: ghSetup.stderr || ghSetup.stdout,
+    })
+    return false
+  }
+
+  return true
+}
 
 function makeThreadKey(channelId: string, threadTs: string): string {
   return `${channelId}:${threadTs}`
@@ -180,15 +242,21 @@ async function ensureSandboxReady(client: SandboxClient, sandboxName: string): P
   await client.setNetworkPolicy(sandboxName, NETWORK_POLICY)
 
   // Ensure required binaries and working directories exist.
-  await client.exec(sandboxName, [
+  const coreSetup = await client.exec(sandboxName, [
     "bash", "-c",
     [
       `if [ ! -x "${client.piBin}" ]; then npm_config_update_notifier=false "${client.npmBin}" install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
-      `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR}`,
+      `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR} ${GH_LOCAL_BIN_DIR}`,
     ].join(" && "),
   ], {
     timeoutMs: 600000,
   })
+  if (coreSetup.exitCode !== 0) {
+    throw new Error(`Failed to bootstrap subagent sandbox core dependencies: ${coreSetup.stderr || coreSetup.stdout}`)
+  }
+
+  // gh install is optional at bootstrap; runtime will retry when GH auth is needed.
+  await ensureGhInstalled(client, sandboxName, "bootstrap")
 
   readySandboxes.add(sandboxName)
   log.info("Coding subagent sandbox ready", { sandbox: sandboxName })
@@ -237,7 +305,7 @@ async function prepareSandboxRun(
   systemPrompt: string | undefined
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {
-    PATH: client.defaultPath,
+    PATH: `${client.defaultPath}:${GH_LOCAL_BIN_DIR}`,
     HOME: "/home/sprite",
     NO_COLOR: "1",
     TERM: "dumb",
@@ -275,6 +343,51 @@ async function prepareSandboxRun(
   })
 
   if (githubToken) {
+    const ghAuthEnv = {
+      PATH: env.PATH,
+      HOME: env.HOME,
+    }
+    const hasGh = await ensureGhInstalled(client, session.sandboxName, "runtime")
+    if (hasGh) {
+      const authResult = await client.exec(session.sandboxName, [
+        "gh", "auth", "login", "--hostname", "github.com", "--with-token",
+      ], {
+        env: ghAuthEnv,
+        stdin: `${githubToken}\n`,
+        timeoutMs: 30000,
+        dir: WORK_DIR,
+      })
+      if (authResult.exitCode !== 0) {
+        log.warn("GitHub auth failed for subagent", {
+          sandbox: session.sandboxName,
+          exitCode: authResult.exitCode,
+          stderr: authResult.stderr || authResult.stdout,
+        })
+      } else {
+        const setupGitResult = await client.exec(session.sandboxName, [
+          "gh", "auth", "setup-git", "--hostname", "github.com",
+        ], {
+          env: ghAuthEnv,
+          timeoutMs: 30000,
+          dir: WORK_DIR,
+        })
+        if (setupGitResult.exitCode !== 0) {
+          log.warn("GitHub git credential setup failed for subagent", {
+            sandbox: session.sandboxName,
+            exitCode: setupGitResult.exitCode,
+            stderr: setupGitResult.stderr || setupGitResult.stdout,
+          })
+        } else {
+          log.info("GitHub CLI authenticated and git credentials configured in subagent sandbox", {
+            sandbox: session.sandboxName,
+          })
+        }
+      }
+    } else {
+      log.warn("Skipping GitHub CLI auth because gh is unavailable in subagent sandbox", {
+        sandbox: session.sandboxName,
+      })
+    }
     env.GH_TOKEN = githubToken
   }
 

@@ -11,6 +11,7 @@ const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
+const GH_LOCAL_BIN_DIR = "/home/sprite/.local/bin"
 
 interface PiEvent {
   type: string
@@ -123,7 +124,7 @@ export async function executeInSandbox(
     }
 
     const env: Record<string, string> = {
-      PATH: sandboxClient.defaultPath,
+      PATH: `${sandboxClient.defaultPath}:${GH_LOCAL_BIN_DIR}`,
       HOME: "/home/sprite",
       NO_COLOR: "1",
       TERM: "dumb",
@@ -167,14 +168,31 @@ export async function executeInSandbox(
         log.warn("Failed to mint GitHub token, continuing without GitHub access", { error: err })
       }
       if (githubToken) {
+        const ghAuthEnv = {
+          PATH: env.PATH,
+          HOME: env.HOME,
+        }
         // gh auth — pass token via stdin to avoid exposing in process list
         const authResult = await sandboxClient.exec(sandboxName, [
-          "gh", "auth", "login", "--with-token",
-        ], { stdin: githubToken, timeoutMs: 30000 })
+          "gh", "auth", "login", "--hostname", "github.com", "--with-token",
+        ], { env: ghAuthEnv, stdin: `${githubToken}\n`, timeoutMs: 30000 })
         if (authResult.exitCode !== 0) {
           log.warn("GitHub auth failed", { exitCode: authResult.exitCode, stderr: authResult.stderr })
         } else {
-          log.info("GitHub CLI authenticated in sandbox", { sandbox: sandboxName })
+          const setupGitResult = await sandboxClient.exec(sandboxName, [
+            "gh", "auth", "setup-git", "--hostname", "github.com",
+          ], { env: ghAuthEnv, timeoutMs: 30000 })
+          if (setupGitResult.exitCode !== 0) {
+            log.warn("GitHub git credential setup failed", {
+              sandbox: sandboxName,
+              exitCode: setupGitResult.exitCode,
+              stderr: setupGitResult.stderr || setupGitResult.stdout,
+            })
+          } else {
+            log.info("GitHub CLI authenticated and git credentials configured in sandbox", {
+              sandbox: sandboxName,
+            })
+          }
         }
 
         // git config — no secrets here, safe to combine
