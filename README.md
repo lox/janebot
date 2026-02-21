@@ -58,6 +58,18 @@ pnpm dev
 
 Logs show requests and response times. Restart to pick up changes.
 
+## REPL
+
+Use the REPL to exercise the same thread-runtime codepath as Slack (`runThreadTurn` + `runControlCommand`):
+
+```bash
+pnpm repl
+pnpm repl -x "status"
+pnpm repl -x "Reply with exactly: ok"
+```
+
+This is intended for architecture-fidelity testing, not a separate execution mode.
+
 ## Deploy
 
 ```bash

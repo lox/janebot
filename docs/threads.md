@@ -38,3 +38,12 @@ Each Slack thread maps to:
 This enables follow-up messages to continue the same coding session without replaying full thread history each turn.
 
 Thread/session mappings are stored in SQLite so janebot can recover them after restarts.
+
+## REPL Fidelity
+
+`scripts/repl.ts` uses the same shared thread runtime as Slack handling (`src/thread-runtime.ts`), including:
+- control command parsing/execution (`/status`, `/abort`)
+- orchestrator turn execution (`runThreadTurn`)
+- the same orchestrator/subagent system prompts
+
+This keeps REPL runs representative of real Slack thread behavior.
