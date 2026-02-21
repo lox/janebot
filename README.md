@@ -77,3 +77,12 @@ fly launch --copy-config
 fly secrets set SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... ANTHROPIC_API_KEY=sk-ant-...
 fly deploy
 ```
+
+For tmux/manual runs with immutable sandbox image tags:
+
+```bash
+pnpm start:prod
+```
+
+This computes `sbox-<hash>` from `Dockerfile.sandbox` and `scripts/bootstrap-sandbox.sh`, pulls
+`ghcr.io/buildkite/janebot-sandbox:<tag>`, sets `DOCKER_SANDBOX_IMAGE`, and starts janebot.
