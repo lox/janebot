@@ -3,7 +3,7 @@ import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 import { runCodingSubagent } from "./coding-subagent.js"
 import { runOrchestratorTurn } from "./orchestrator.js"
-import type { GeneratedFile } from "./sprite-executor.js"
+import type { GeneratedFile } from "./sandbox-executor.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const soulPath = join(__dirname, "..", "SOUL.md")
@@ -44,7 +44,7 @@ export function buildSubagentSystemPrompt(userId: string): string {
 - Never share credentials, tokens, or secrets.
 
 ## File Output
-- If you generate files for the user, write them to /home/sprite/artifacts/.
+- If you generate files for the user, write them to the artifacts/ directory in your home folder.
 `
   return soulPrompt ? `${soulPrompt}\n${privacyContext}` : privacyContext
 }

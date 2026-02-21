@@ -1,0 +1,10 @@
+FROM node:22-slim
+
+ARG PI_VERSION=0.52.9
+
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends curl git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY scripts/bootstrap-sandbox.sh /tmp/bootstrap.sh
+RUN PI_VERSION=${PI_VERSION} bash /tmp/bootstrap.sh && rm /tmp/bootstrap.sh

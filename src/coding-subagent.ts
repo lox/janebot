@@ -2,14 +2,14 @@ import { createHash, randomUUID } from "crypto"
 import { config } from "./config.js"
 import { getGitHubToken } from "./github-app.js"
 import * as log from "./logger.js"
-import { parsePiOutput, type GeneratedFile } from "./sprite-executor.js"
+import { parsePiOutput, type GeneratedFile } from "./sandbox-executor.js"
 import { getSandboxClient, getSandboxName, type SandboxClient, type SandboxNetworkPolicyRule } from "./sandbox.js"
 import { getSessionStore, type PersistedSubagentSession } from "./session-store.js"
 
-const WORK_DIR = "/home/sprite/workspace"
-const ARTIFACTS_DIR = "/home/sprite/artifacts"
-const SESSIONS_DIR = "/home/sprite/sessions"
-const GH_LOCAL_BIN_DIR = "/home/sprite/.local/bin"
+function workDir(client: SandboxClient): string { return `${client.homeDir}/workspace` }
+function artifactsDir(client: SandboxClient): string { return `${client.homeDir}/artifacts` }
+function sessionsDir(client: SandboxClient): string { return `${client.homeDir}/sessions` }
+function ghLocalBinDir(client: SandboxClient): string { return `${client.homeDir}/.local/bin` }
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
@@ -56,9 +56,9 @@ const sessionsByKey = new Map<string, SubagentSession>()
 const sessionsById = new Map<string, SubagentSession>()
 const readySandboxes = new Set<string>()
 
-function ghInstallScript(): string {
+function ghInstallScript(binDir: string): string {
   return [
-    `if ! command -v gh >/dev/null 2>&1 && [ ! -x "${GH_LOCAL_BIN_DIR}/gh" ]; then`,
+    `if ! command -v gh >/dev/null 2>&1 && [ ! -x "${binDir}/gh" ]; then`,
     "  set -euo pipefail",
     "  arch=$(uname -m)",
     "  case \"$arch\" in",
@@ -75,8 +75,8 @@ function ghInstallScript(): string {
     "  trap 'rm -rf \"$tmp_dir\"' EXIT",
     "  curl -fsSL \"https://github.com/cli/cli/releases/download/${gh_tag}/gh_${gh_tag#v}_linux_${gh_arch}.tar.gz\" -o \"$tmp_dir/gh.tgz\"",
     "  tar -xzf \"$tmp_dir/gh.tgz\" -C \"$tmp_dir\"",
-    `  mkdir -p ${GH_LOCAL_BIN_DIR}`,
-    "  install \"$tmp_dir/gh_${gh_tag#v}_linux_${gh_arch}/bin/gh\" " + `${GH_LOCAL_BIN_DIR}/gh`,
+    `  mkdir -p ${binDir}`,
+    "  install \"$tmp_dir/gh_${gh_tag#v}_linux_${gh_arch}/bin/gh\" " + `${binDir}/gh`,
     "fi",
   ].join("\n")
 }
@@ -89,7 +89,7 @@ async function ensureGhInstalled(
   const ghExists = await client.exec(sandboxName, [
     "bash",
     "-c",
-    `if command -v gh >/dev/null 2>&1 || [ -x "${GH_LOCAL_BIN_DIR}/gh" ]; then exit 0; fi; exit 1`,
+    `if command -v gh >/dev/null 2>&1 || [ -x "${ghLocalBinDir(client)}/gh" ]; then exit 0; fi; exit 1`,
   ], {
     timeoutMs: 10000,
   })
@@ -100,7 +100,7 @@ async function ensureGhInstalled(
   const ghSetup = await client.exec(sandboxName, [
     "bash",
     "-c",
-    ghInstallScript(),
+    ghInstallScript(ghLocalBinDir(client)),
   ], {
     timeoutMs: 600000,
   })
@@ -246,7 +246,7 @@ async function ensureSandboxReady(client: SandboxClient, sandboxName: string): P
     "bash", "-c",
     [
       `if [ ! -x "${client.piBin}" ]; then npm_config_update_notifier=false "${client.npmBin}" install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
-      `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR} ${GH_LOCAL_BIN_DIR}`,
+      `mkdir -p ${workDir(client)} ${artifactsDir(client)} ${sessionsDir(client)} ${ghLocalBinDir(client)}`,
     ].join(" && "),
   ], {
     timeoutMs: 600000,
@@ -285,7 +285,7 @@ async function ensureSession(
     channelId,
     threadTs,
     sandboxName,
-    piSessionFile: `${SESSIONS_DIR}/${subagentSessionId}.jsonl`,
+    piSessionFile: `${sessionsDir(client)}/${subagentSessionId}.jsonl`,
     status: "idle",
     turns: 0,
     createdAt: Date.now(),
@@ -305,8 +305,8 @@ async function prepareSandboxRun(
   systemPrompt: string | undefined
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {
-    PATH: `${client.defaultPath}:${GH_LOCAL_BIN_DIR}`,
-    HOME: "/home/sprite",
+    PATH: `${client.defaultPath}:${ghLocalBinDir(client)}`,
+    HOME: client.homeDir,
     NO_COLOR: "1",
     TERM: "dumb",
     CI: "true",
@@ -321,18 +321,18 @@ async function prepareSandboxRun(
   if (systemPrompt) {
     const agentsContent = systemPrompt.replace(/'/g, "'\\''")
     await client.exec(session.sandboxName, [
-      "bash", "-c", `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
+      "bash", "-c", `printf '%s' '${agentsContent}' > ${client.homeDir}/AGENTS.md`,
     ], {
       timeoutMs: 30000,
-      dir: WORK_DIR,
+      dir: workDir(client),
     })
   }
 
   await client.exec(session.sandboxName, [
-    "bash", "-c", `rm -rf ${ARTIFACTS_DIR} && mkdir -p ${ARTIFACTS_DIR}`,
+    "bash", "-c", `rm -rf ${artifactsDir(client)} && mkdir -p ${artifactsDir(client)}`,
   ], {
     timeoutMs: 10000,
-    dir: WORK_DIR,
+    dir: workDir(client),
   })
 
   const githubToken = await getGitHubToken().catch((err) => {
@@ -355,7 +355,7 @@ async function prepareSandboxRun(
         env: ghAuthEnv,
         stdin: `${githubToken}\n`,
         timeoutMs: 30000,
-        dir: WORK_DIR,
+        dir: workDir(client),
       })
       if (authResult.exitCode !== 0) {
         log.warn("GitHub auth failed for subagent", {
@@ -369,7 +369,7 @@ async function prepareSandboxRun(
         ], {
           env: ghAuthEnv,
           timeoutMs: 30000,
-          dir: WORK_DIR,
+          dir: workDir(client),
         })
         if (setupGitResult.exitCode !== 0) {
           log.warn("GitHub git credential setup failed for subagent", {
@@ -389,6 +389,12 @@ async function prepareSandboxRun(
       })
     }
     env.GH_TOKEN = githubToken
+    const authResult = await client.exec(session.sandboxName, [
+      "gh", "auth", "login", "--with-token",
+    ], { stdin: githubToken, timeoutMs: 30000, env: { HOME: client.homeDir } })
+    if (authResult.exitCode !== 0) {
+      log.warn("gh auth login failed in subagent sandbox", { exitCode: authResult.exitCode, stderr: authResult.stderr })
+    }
   }
 
   if (config.gitAuthorName || config.gitAuthorEmail) {
@@ -402,7 +408,7 @@ async function prepareSandboxRun(
     if (parts.length > 0) {
       await client.exec(session.sandboxName, ["bash", "-c", parts.join(" && ")], {
         timeoutMs: 10000,
-        dir: WORK_DIR,
+        dir: workDir(client),
       })
     }
   }
@@ -413,10 +419,10 @@ async function prepareSandboxRun(
 async function collectArtifacts(client: SandboxClient, session: SubagentSession): Promise<GeneratedFile[]> {
   const generatedFiles: GeneratedFile[] = []
   const artifactResult = await client.exec(session.sandboxName,
-    ["find", ARTIFACTS_DIR, "-type", "f", "-maxdepth", "2", "-size", "-10M"],
+    ["find", artifactsDir(client), "-type", "f", "-maxdepth", "2", "-size", "-10M"],
     {
       timeoutMs: 10000,
-      dir: WORK_DIR,
+      dir: workDir(client),
     })
 
   const artifactPaths = artifactResult.stdout.trim().split("\n").filter(Boolean)
@@ -463,7 +469,7 @@ async function isSessionPiProcessRunning(client: SandboxClient, session: Subagen
     const probe = await client.exec(session.sandboxName, ["bash", "-c", probeCommand], {
       timeoutMs: 10000,
       maxRetries: 1,
-      dir: WORK_DIR,
+      dir: workDir(client),
     })
     return probe.exitCode === 0
   } catch (err) {
@@ -526,10 +532,10 @@ async function sendMessageToSubagent(
     env,
     stdin: message + "\n",
     timeoutMs: EXEC_TIMEOUT_MS,
-    dir: WORK_DIR,
-  })
+    dir: workDir(client),
+    })
 
-  if (result.exitCode !== 0) {
+    if (result.exitCode !== 0) {
     const stderr = result.stderr.slice(0, 500)
     throw new Error(`Pi exited with code ${result.exitCode}${stderr ? `: ${stderr}` : ""}`)
   }
@@ -602,7 +608,7 @@ export interface RunCodingSubagentResult {
   generatedFiles: GeneratedFile[]
 }
 
-function rehydrateSession(channelId: string, threadTs: string): SubagentSession {
+function rehydrateSession(client: SandboxClient, channelId: string, threadTs: string): SubagentSession {
   const existing = getSessionByThread(channelId, threadTs)
   if (existing) return existing
 
@@ -616,7 +622,7 @@ function rehydrateSession(channelId: string, threadTs: string): SubagentSession 
     channelId,
     threadTs,
     sandboxName,
-    piSessionFile: `${SESSIONS_DIR}/${subagentSessionId}.jsonl`,
+    piSessionFile: `${sessionsDir(client)}/${subagentSessionId}.jsonl`,
     status: "idle",
     turns: 0,
     createdAt: Date.now(),
@@ -667,7 +673,7 @@ export async function runCodingSubagent(
     if (!session && input.channelId && input.threadTs) {
       const sandbox = await client.get(getSandboxName(input.channelId, input.threadTs))
       if (sandbox) {
-        session = rehydrateSession(input.channelId, input.threadTs)
+        session = rehydrateSession(client, input.channelId, input.threadTs)
       }
     }
     if (!session) {
@@ -687,7 +693,7 @@ export async function runCodingSubagent(
     if (!session && input.channelId && input.threadTs) {
       const sandbox = await client.get(getSandboxName(input.channelId, input.threadTs))
       if (sandbox) {
-        session = rehydrateSession(input.channelId, input.threadTs)
+        session = rehydrateSession(client, input.channelId, input.threadTs)
       }
     }
     if (!session) {
@@ -697,7 +703,7 @@ export async function runCodingSubagent(
     await client.exec(session.sandboxName, ["pkill", "-f", "pi"], {
       timeoutMs: 10000,
       maxRetries: 1,
-      dir: WORK_DIR,
+      dir: workDir(client),
     }).catch(() => {
       // Ignore if there is nothing to kill.
     })

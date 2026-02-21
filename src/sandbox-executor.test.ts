@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert"
-import { parsePiOutput } from "./sprite-executor.js"
+import { parsePiOutput } from "./sandbox-executor.js"
 
 describe("parsePiOutput", () => {
   it("extracts content from agent_end messages", () => {

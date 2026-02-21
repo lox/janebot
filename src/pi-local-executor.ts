@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import { access, readdir, readFile, stat } from "node:fs/promises"
 import { constants } from "node:fs"
 import { dirname, join } from "node:path"
-import { parsePiOutput, type GeneratedFile } from "./sprite-executor.js"
+import { parsePiOutput, type GeneratedFile } from "./sandbox-executor.js"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.LOCAL_PI_EXEC_TIMEOUT_MS || "", 10)
