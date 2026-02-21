@@ -13,7 +13,7 @@
 
 import "dotenv/config"
 import { SpritesClient } from "../src/sprites.js"
-import { parsePiOutput } from "../src/sprite-executor.js"
+import { parsePiOutput } from "../src/sandbox-executor.js"
 
 const PI_VERSION = "0.52.9"
 const SANDBOX_PATH =
