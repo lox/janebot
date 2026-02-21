@@ -39,6 +39,8 @@ const NETWORK_POLICY: SandboxNetworkPolicyRule[] = [
   { action: "allow", domain: "www.python.org" },
   { action: "allow", domain: "go.dev" },
   { action: "allow", domain: "dl.google.com" },
+  { action: "allow", domain: "nodejs.org" },
+  { action: "allow", domain: "*.nodejs.org" },
 ]
 
 type SessionStatus = "idle" | "running" | "error"
@@ -179,12 +181,13 @@ async function ensureMiseTools(
     env,
   })
   if (install.exitCode !== 0) {
-    log.warn("mise install failed", {
+    log.warn("mise install partially failed — previously installed tools may still be available", {
       sandbox: sandboxName,
       exitCode: install.exitCode,
       output: (install.stderr || install.stdout).slice(0, 1000),
     })
-    return null
+    // Don't return null — still return the shims dir so any previously-installed
+    // or partially-installed tools remain on PATH.
   }
 
   // Reshim so binaries are available at the shims path
