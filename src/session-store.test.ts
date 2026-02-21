@@ -32,7 +32,7 @@ describe("SessionStore", () => {
       key: "C123:1234.567",
       channelId: "C123",
       threadTs: "1234.567",
-      spriteName: "jane-abc",
+      sandboxName: "jane-abc",
       piSessionFile: "/home/sprite/sessions/sa_123.jsonl",
       status: "idle",
       turns: 0,

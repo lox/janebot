@@ -10,7 +10,7 @@ export interface PersistedSubagentSession {
   key: string
   channelId: string
   threadTs: string
-  spriteName: string
+  sandboxName: string
   piSessionFile: string
   status: PersistedSessionStatus
   runningJobId?: string
@@ -141,7 +141,7 @@ export class SessionStore {
         session.key,
         session.channelId,
         session.threadTs,
-        session.spriteName,
+        session.sandboxName,
         session.piSessionFile,
         session.status,
         session.runningJobId ?? null,
@@ -220,7 +220,7 @@ function mapRow(row: SessionRow): PersistedSubagentSession {
     key: row.thread_key,
     channelId: row.channel_id,
     threadTs: row.thread_ts,
-    spriteName: row.sprite_name,
+    sandboxName: row.sprite_name,
     piSessionFile: row.pi_session_file,
     status: row.status,
     runningJobId: row.running_job_id ?? undefined,

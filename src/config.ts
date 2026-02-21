@@ -17,10 +17,10 @@ export interface JanebotConfig {
   allowedUserIds: string[]
   allowedChannelIds: string[]
 
-  // Sandbox backend: "sprites" (Fly VMs) or "docker" (local Docker)
+  // Sandbox backend: "sprites" (remote VMs) or "docker" (local Docker)
   sandboxBackend: "sprites" | "docker"
 
-  // Sprites (required when sandboxBackend is "sprites")
+  // Remote sandbox token (required when sandboxBackend is "sprites")
   spritesToken: string | undefined
 
   // Git identity for commits made in sandboxes

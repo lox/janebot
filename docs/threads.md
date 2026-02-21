@@ -5,13 +5,13 @@ Jane uses a **persistent subagent session model**.
 ## How It Works
 
 ```
-Slack Thread (channel + thread_ts)  →  Subagent Session ID (sa_xxx)  →  Dedicated Sprite
+Slack Thread (channel + thread_ts)  →  Subagent Session ID (sa_xxx)  →  Dedicated Sandbox
 ```
 
 When a user sends a message in a Slack thread, Jane:
 1. Continues the thread's host orchestrator Pi session
 2. The orchestrator decides whether to delegate coding via `run_coding_subagent`
-3. Delegated work runs in the same long-lived Pi session in that thread's Sprite
+3. Delegated work runs in the same long-lived Pi session in that thread's sandbox
 4. Jane returns the synthesized result back to Slack
 
 ## Why Persistent Sessions?
@@ -33,7 +33,7 @@ Inside a Slack thread:
 
 Each Slack thread maps to:
 - a stable host orchestrator session
-- a stable `subagent_session_id` and Sprite name derived from `(channel_id, thread_ts)`
+- a stable `subagent_session_id` and sandbox name derived from `(channel_id, thread_ts)`
 
 This enables follow-up messages to continue the same coding session without replaying full thread history each turn.
 
