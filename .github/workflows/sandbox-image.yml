@@ -34,5 +34,6 @@ jobs:
           file: Dockerfile.sandbox
           push: true
           tags: |
+            ghcr.io/buildkite/janebot-sandbox:latest
             ghcr.io/buildkite/janebot-sandbox:${{ steps.meta.outputs.sandbox_tag }}
             ghcr.io/buildkite/janebot-sandbox:${{ github.sha }}
