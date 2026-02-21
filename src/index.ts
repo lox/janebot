@@ -93,7 +93,7 @@ async function fetchThreadContext(
 }
 
 /**
- * Build system prompt for sprite coding subagents.
+ * Build system prompt for sandbox coding subagents.
  */
 function buildSubagentSystemPrompt(userId: string): string {
   const privacyContext = `
@@ -501,7 +501,7 @@ function createSandboxClient() {
     return new DockerSandboxClient()
   }
   if (!config.spritesToken) {
-    throw new Error("SPRITES_TOKEN is required when SANDBOX_BACKEND=sprites")
+    throw new Error("Sandbox token (SPRITES_TOKEN) is required when using the sprites backend")
   }
   return new SpritesClient(config.spritesToken)
 }

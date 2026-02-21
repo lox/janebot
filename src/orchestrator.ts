@@ -56,7 +56,7 @@ function formatSubagentResult(result: RunCodingSubagentResult): string {
   parts.push(`status=${result.status}`)
   if (result.subagentSessionId) parts.push(`subagent_session_id=${result.subagentSessionId}`)
   if (result.jobId) parts.push(`job_id=${result.jobId}`)
-  if (result.spriteName) parts.push(`sprite=${result.spriteName}`)
+  if (result.sandboxName) parts.push(`sandbox=${result.sandboxName}`)
   if (typeof result.created === "boolean") parts.push(`created=${result.created}`)
   if (result.content) parts.push(`content=${result.content}`)
   if (result.generatedFiles.length > 0) {
@@ -71,7 +71,7 @@ function toSafeDetails(result: RunCodingSubagentResult): Record<string, unknown>
     subagentSessionId: result.subagentSessionId,
     jobId: result.jobId,
     created: result.created,
-    spriteName: result.spriteName,
+    sandboxName: result.sandboxName,
     content: result.content,
     generatedFiles: result.generatedFiles.map((file) => ({
       path: file.path,
@@ -146,7 +146,7 @@ function buildOrchestratorTool(
     name: "run_coding_subagent",
     label: "Run Coding Subagent",
     description:
-      "Delegate coding work to the thread's persistent sprite subagent. " +
+      "Delegate coding work to the thread's persistent sandbox subagent. " +
       "Use action=send with an instruction for coding tasks. Use status/abort for control.",
     parameters: {
       type: "object",

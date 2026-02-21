@@ -7,7 +7,7 @@ import { getGitHubToken } from "./github-app.js"
 const DEBUG_PI_OUTPUT = process.env.DEBUG_PI_OUTPUT === "1"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
-const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
+const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
@@ -35,7 +35,7 @@ interface PiMessageStartEvent extends PiEvent {
   }
 }
 
-export interface SpriteExecutorOptions {
+export interface SandboxExecutorOptions {
   prompt: string
   systemPrompt?: string
   userId: string
@@ -47,10 +47,10 @@ export interface GeneratedFile {
   data?: Buffer
 }
 
-export interface SpriteExecutorResult {
+export interface SandboxExecutorResult {
   content: string
   threadId: string | undefined
-  spriteName: string
+  sandboxName: string
   generatedFiles: GeneratedFile[]
 }
 
@@ -105,14 +105,14 @@ export function parsePiOutput(stdout: string): {
   return { content, model }
 }
 
-export async function executeInSprite(
-  options: SpriteExecutorOptions
-): Promise<SpriteExecutorResult> {
+export async function executeInSandbox(
+  options: SandboxExecutorOptions
+): Promise<SandboxExecutorResult> {
   const sandboxClient = getSandboxClient()
-  const { name: spriteName, release } = await acquireRunner()
+  const { name: sandboxName, release } = await acquireRunner()
 
   try {
-    log.info("Acquired runner", { sprite: spriteName })
+    log.info("Acquired runner", { sandbox: sandboxName })
 
     const args: string[] = [sandboxClient.piBin, "--mode", "json", "--no-session"]
     if (config.piModel) {
@@ -143,7 +143,7 @@ export async function executeInSprite(
     if (options.systemPrompt) {
       const agentsContent = options.systemPrompt.replace(/'/g, "'\\''")
       setupTasks.push(
-        sandboxClient.exec(spriteName, [
+        sandboxClient.exec(sandboxName, [
           "bash", "-c",
           `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
         ], { timeoutMs: 30000 }).then(() => {})
@@ -152,13 +152,13 @@ export async function executeInSprite(
 
     // Clean artifacts dir before each run
     setupTasks.push(
-      sandboxClient.exec(spriteName, [
+      sandboxClient.exec(sandboxName, [
         "bash", "-c",
         "rm -rf /home/sprite/artifacts && mkdir -p /home/sprite/artifacts",
       ], { timeoutMs: 10000 }).then(() => {})
     )
 
-    // GitHub setup — mint token (cached) + configure in sprite
+    // GitHub setup — mint token (cached) + configure in sandbox
     setupTasks.push((async () => {
       let githubToken: string | undefined
       try {
@@ -168,13 +168,13 @@ export async function executeInSprite(
       }
       if (githubToken) {
         // gh auth — pass token via stdin to avoid exposing in process list
-        const authResult = await sandboxClient.exec(spriteName, [
+        const authResult = await sandboxClient.exec(sandboxName, [
           "gh", "auth", "login", "--with-token",
         ], { stdin: githubToken, timeoutMs: 30000 })
         if (authResult.exitCode !== 0) {
           log.warn("GitHub auth failed", { exitCode: authResult.exitCode, stderr: authResult.stderr })
         } else {
-          log.info("GitHub CLI authenticated in sprite", { sprite: spriteName })
+          log.info("GitHub CLI authenticated in sandbox", { sandbox: sandboxName })
         }
 
         // git config — no secrets here, safe to combine
@@ -186,7 +186,7 @@ export async function executeInSprite(
           gitConfigParts.push(`git config --global user.email '${config.gitAuthorEmail.replace(/'/g, "'\\''")}'`)
         }
         if (gitConfigParts.length > 0) {
-          await sandboxClient.exec(spriteName, [
+          await sandboxClient.exec(sandboxName, [
             "bash", "-c", gitConfigParts.join(" && "),
           ], { timeoutMs: 10000 })
         }
@@ -197,12 +197,12 @@ export async function executeInSprite(
 
     await Promise.all(setupTasks)
 
-    log.info("Executing pi in sprite", {
-      sprite: spriteName,
+    log.info("Executing pi in sandbox", {
+      sandbox: sandboxName,
       timeoutMs: EXEC_TIMEOUT_MS,
     })
 
-    const result = await sandboxClient.exec(spriteName, args, {
+    const result = await sandboxClient.exec(sandboxName, args, {
       env,
       stdin: options.prompt + "\n",
       timeoutMs: EXEC_TIMEOUT_MS,
@@ -233,7 +233,7 @@ export async function executeInSprite(
 
     // Collect artifacts
     const generatedFiles: GeneratedFile[] = []
-    const artifactResult = await sandboxClient.exec(spriteName,
+    const artifactResult = await sandboxClient.exec(sandboxName,
       ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2", "-size", "-10M"],
       { timeoutMs: 10000 })
     const artifactPaths = artifactResult.stdout.trim().split("\n").filter(Boolean)
@@ -248,7 +248,7 @@ export async function executeInSprite(
       // Download file data now, before the runner is released and checkpoint restored
       let data: Buffer | undefined
       try {
-        data = await sandboxClient.downloadFile(spriteName, artifactPath)
+        data = await sandboxClient.downloadFile(sandboxName, artifactPath)
       } catch (err) {
         log.warn("Failed to download artifact", { path: artifactPath, error: err instanceof Error ? err.message : String(err) })
       }
@@ -266,11 +266,11 @@ export async function executeInSprite(
     return {
       content: content || "Done.",
       threadId: undefined,
-      spriteName,
+      sandboxName,
       generatedFiles,
     }
   } finally {
     await release()
-    log.info("Released runner", { sprite: spriteName })
+    log.info("Released runner", { sandbox: sandboxName })
   }
 }

@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "test": "tsx --test src/*.test.ts",
-    "test:sprite": "tsx scripts/test-sprite-execution.ts",
+    "test:sandbox": "tsx scripts/test-sandbox-execution.ts",
     "repl": "tsx scripts/repl.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

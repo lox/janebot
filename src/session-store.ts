@@ -10,7 +10,7 @@ export interface PersistedSubagentSession {
   key: string
   channelId: string
   threadTs: string
-  spriteName: string
+  sandboxName: string
   piSessionFile: string
   status: PersistedSessionStatus
   runningJobId?: string
@@ -24,33 +24,47 @@ export interface PersistedSubagentSession {
 interface Migration {
   version: number
   description: string
-  sql: string
+  apply: (db: DatabaseSync) => void
 }
 
 const MIGRATIONS: Migration[] = [
   {
     version: 1,
     description: "Create subagent sessions table",
-    sql: `
-      CREATE TABLE IF NOT EXISTS subagent_sessions (
-        id TEXT PRIMARY KEY,
-        thread_key TEXT NOT NULL UNIQUE,
-        channel_id TEXT NOT NULL,
-        thread_ts TEXT NOT NULL,
-        sprite_name TEXT NOT NULL,
-        pi_session_file TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'error')),
-        running_job_id TEXT,
-        last_job_id TEXT,
-        last_error TEXT,
-        turns INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
+    apply(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS subagent_sessions (
+          id TEXT PRIMARY KEY,
+          thread_key TEXT NOT NULL UNIQUE,
+          channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          sandbox_name TEXT NOT NULL,
+          pi_session_file TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'error')),
+          running_job_id TEXT,
+          last_job_id TEXT,
+          last_error TEXT,
+          turns INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
 
-      CREATE INDEX IF NOT EXISTS idx_subagent_sessions_updated_at
-        ON subagent_sessions(updated_at);
-    `,
+        CREATE INDEX IF NOT EXISTS idx_subagent_sessions_updated_at
+          ON subagent_sessions(updated_at);
+      `)
+    },
+  },
+  {
+    version: 2,
+    description: "Rename sprite_name column to sandbox_name",
+    apply(db) {
+      if (
+        hasColumn(db, "subagent_sessions", "sprite_name") &&
+        !hasColumn(db, "subagent_sessions", "sandbox_name")
+      ) {
+        db.exec("ALTER TABLE subagent_sessions RENAME COLUMN sprite_name TO sandbox_name;")
+      }
+    },
   },
 ]
 
@@ -59,7 +73,7 @@ type SessionRow = {
   thread_key: string
   channel_id: string
   thread_ts: string
-  sprite_name: string
+  sandbox_name: string
   pi_session_file: string
   status: PersistedSessionStatus
   running_job_id: string | null
@@ -113,7 +127,7 @@ export class SessionStore {
           thread_key,
           channel_id,
           thread_ts,
-          sprite_name,
+          sandbox_name,
           pi_session_file,
           status,
           running_job_id,
@@ -127,7 +141,7 @@ export class SessionStore {
           thread_key = excluded.thread_key,
           channel_id = excluded.channel_id,
           thread_ts = excluded.thread_ts,
-          sprite_name = excluded.sprite_name,
+          sandbox_name = excluded.sandbox_name,
           pi_session_file = excluded.pi_session_file,
           status = excluded.status,
           running_job_id = excluded.running_job_id,
@@ -141,7 +155,7 @@ export class SessionStore {
         session.key,
         session.channelId,
         session.threadTs,
-        session.spriteName,
+        session.sandboxName,
         session.piSessionFile,
         session.status,
         session.runningJobId ?? null,
@@ -172,7 +186,7 @@ export class SessionStore {
 
       this.db.exec("BEGIN")
       try {
-        this.db.exec(migration.sql)
+        migration.apply(this.db)
         this.db
           .prepare("INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)")
           .run(migration.version, migration.description, Date.now())
@@ -220,7 +234,7 @@ function mapRow(row: SessionRow): PersistedSubagentSession {
     key: row.thread_key,
     channelId: row.channel_id,
     threadTs: row.thread_ts,
-    spriteName: row.sprite_name,
+    sandboxName: row.sandbox_name,
     piSessionFile: row.pi_session_file,
     status: row.status,
     runningJobId: row.running_job_id ?? undefined,
@@ -230,4 +244,11 @@ function mapRow(row: SessionRow): PersistedSubagentSession {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+function hasColumn(db: DatabaseSync, tableName: string, columnName: string): boolean {
+  const rows = db
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name: string }>
+  return rows.some((row) => row.name === columnName)
 }

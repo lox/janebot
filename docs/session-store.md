@@ -37,7 +37,7 @@ Persistent mapping for thread-to-subagent identity and runtime state.
 | `thread_key` | `TEXT` | Unique (`<channel_id>:<thread_ts>`) |
 | `channel_id` | `TEXT` | Slack channel id |
 | `thread_ts` | `TEXT` | Slack thread timestamp |
-| `sprite_name` | `TEXT` | Deterministic sandbox name |
+| `sandbox_name` | `TEXT` | Deterministic sandbox name |
 | `pi_session_file` | `TEXT` | Pi JSONL session file path in sandbox |
 | `status` | `TEXT` | `idle`, `running`, or `error` |
 | `running_job_id` | `TEXT` | Active job id, nullable |

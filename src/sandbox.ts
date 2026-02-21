@@ -1,5 +1,5 @@
 /**
- * SandboxClient interface — abstraction over container backends (Sprites, Docker).
+ * SandboxClient interface — abstraction over container backends.
  *
  * Provides container lifecycle, command execution, checkpoint/restore,
  * and file access. Implementations live in sprites.ts and docker-sandbox.ts.

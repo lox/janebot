@@ -13,7 +13,7 @@
 import "dotenv/config"
 import * as readline from "readline"
 import { config } from "../src/config.js"
-import { executeInSprite, type GeneratedFile } from "../src/sprite-executor.js"
+import { executeInSandbox, type GeneratedFile } from "../src/sprite-executor.js"
 import { executeLocalPi } from "../src/pi-local-executor.js"
 
 // Fake user ID for the session
@@ -45,10 +45,10 @@ async function runPiLocal(
   })
 }
 
-async function runPiInSprite(
+async function runPiInSandbox(
   prompt: string
-): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; spriteName: string }> {
-  const result = await executeInSprite({
+): Promise<{ content: string; threadId: string | undefined; generatedFiles: GeneratedFile[]; sandboxName: string }> {
+  const result = await executeInSandbox({
     userId: FAKE_USER_ID,
     prompt,
     systemPrompt: buildSystemPrompt(FAKE_USER_ID),
@@ -57,7 +57,7 @@ async function runPiInSprite(
     content: result.content,
     threadId: result.threadId,
     generatedFiles: result.generatedFiles,
-    spriteName: result.spriteName,
+    sandboxName: result.sandboxName,
   }
 }
 
@@ -66,11 +66,11 @@ async function handleMessage(input: string, forceLocal: boolean, quiet = false):
   messageCount++
 
   try {
-    let result: { content: string; threadId: string | undefined; generatedFiles?: GeneratedFile[]; spriteName?: string }
+    let result: { content: string; threadId: string | undefined; generatedFiles?: GeneratedFile[]; sandboxName?: string }
 
     if (config.spritesToken && !forceLocal) {
-      if (!quiet) console.log("\x1b[90m  [Using Sprite sandbox...]\x1b[0m")
-      result = await runPiInSprite(input)
+      if (!quiet) console.log("\x1b[90m  [Using sandbox backend...]\x1b[0m")
+      result = await runPiInSandbox(input)
     } else {
       if (!quiet) console.log("\x1b[90m  [Using local execution...]\x1b[0m")
       result = await runPiLocal(input)
@@ -126,11 +126,11 @@ async function runOnce(
   }
 
   if (!config.spritesToken && !config.allowLocalExecution) {
-    console.error("ERROR: Set SPRITES_TOKEN or ALLOW_LOCAL_EXECUTION=true")
+    console.error("ERROR: Set sandbox token (SPRITES_TOKEN) or ALLOW_LOCAL_EXECUTION=true")
     process.exit(1)
   }
 
-  const mode = config.spritesToken && !forceLocal ? "sprite" : "local"
+  const mode = config.spritesToken && !forceLocal ? "sandbox" : "local"
   console.log(`\x1b[90m[Executing in ${mode} mode...]\x1b[0m`)
   console.log(`\x1b[90m[Prompt: ${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}]\x1b[0m\n`)
 
@@ -148,7 +148,7 @@ async function runInteractive(forceLocal: boolean): Promise<void> {
   // Check required env vars
   console.log("Environment check:")
   console.log(`  ANTHROPIC_API_KEY: ${process.env.ANTHROPIC_API_KEY ? "✓ set" : "✗ NOT SET"}`)
-  console.log(`  SPRITES_TOKEN: ${process.env.SPRITES_TOKEN ? "✓ set" : "✗ not set"}`)
+  console.log(`  SANDBOX_TOKEN (SPRITES_TOKEN): ${process.env.SPRITES_TOKEN ? "✓ set" : "✗ not set"}`)
   console.log(`  ALLOW_LOCAL_EXECUTION: ${process.env.ALLOW_LOCAL_EXECUTION || "not set"}`)
   console.log()
 
@@ -158,14 +158,14 @@ async function runInteractive(forceLocal: boolean): Promise<void> {
   }
 
   if (!config.spritesToken && !config.allowLocalExecution) {
-    console.log("\x1b[33mWarning: Neither SPRITES_TOKEN nor ALLOW_LOCAL_EXECUTION is set.\x1b[0m")
+    console.log("\x1b[33mWarning: Neither sandbox token (SPRITES_TOKEN) nor ALLOW_LOCAL_EXECUTION is set.\x1b[0m")
     console.log("Set ALLOW_LOCAL_EXECUTION=true in .env for local testing.\n")
   }
 
   if (forceLocal) {
     console.log("\x1b[33m--local flag: Forcing local execution\x1b[0m\n")
   } else if (config.spritesToken) {
-    console.log(`\x1b[32mUsing Sprites sandbox\x1b[0m\n`)
+    console.log(`\x1b[32mUsing sandbox backend\x1b[0m\n`)
   } else {
     console.log("\x1b[32mUsing local execution\x1b[0m\n")
   }

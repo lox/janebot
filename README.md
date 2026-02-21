@@ -2,7 +2,7 @@
 
 # janebot
 
-Jane is a Slack bot that orchestrates long-lived coding subagents in Sprites. She has opinions and won't say "Great question!".
+Jane is a Slack bot that orchestrates long-lived coding subagents in isolated sandboxes. She has opinions and won't say "Great question!".
 
 [SOUL.md](./SOUL.md) defines her personality. [docs/threads.md](./docs/threads.md) explains the thread model. [docs/security-model.md](./docs/security-model.md) covers isolation, credentials, and what Jane can and can't do. [docs/session-store.md](./docs/session-store.md) documents SQLite session persistence.
 
@@ -28,7 +28,7 @@ Mention `@janebot` in a channel or DM her.
 
 - Top-level Jane is a persistent Pi orchestrator session per Slack thread.
 - Host orchestrator runs with no built-in file/shell tools and delegates via `run_coding_subagent`.
-- Each Slack thread gets a sticky coding subagent session in a dedicated Sprite.
+- Each Slack thread gets a sticky coding subagent session in a dedicated sandbox.
 - Follow-up messages in the same Slack thread continue the same Pi session.
 - Use `/status` in a thread to inspect subagent status, and `/abort` to stop a running coding job.
 

@@ -1,6 +1,6 @@
 # Security model
 
-Jane runs untrusted prompts from Slack users by delegating coding work to sandboxed Sprites.
+Jane runs untrusted prompts from Slack users by delegating coding work to isolated sandboxes.
 
 ## Execution environments
 
@@ -10,9 +10,9 @@ Jane now has two tiers:
 
 The Fly host runs the Slack control loop and a top-level Pi orchestrator session. The host orchestrator has no built-in file/shell tools and delegates coding work through a single brokered tool (`run_coding_subagent`).
 
-### Coding subagents (Sprites)
+### Coding subagents (Sandboxes)
 
-Each Slack thread is mapped to a dedicated Sprite + Pi session. The session is long-lived and reused across follow-up messages in that thread.
+Each Slack thread is mapped to a dedicated sandbox + Pi session. The session is long-lived and reused across follow-up messages in that thread.
 
 Session metadata is persisted locally in SQLite (`SESSION_DB_PATH`) so thread-to-session mappings survive host process restarts.
 
@@ -23,7 +23,7 @@ Key properties:
 
 ## Network policy
 
-Sprites can only reach explicitly allowed domains. The allowlist is defined in `src/coding-subagent.ts` and includes:
+Sandboxes can only reach explicitly allowed domains. The allowlist is defined in `src/coding-subagent.ts` and includes:
 
 - LLM/provider infra (`api.anthropic.com`, `api.openai.com`, Google storage/APIs, Cloudflare)
 - Package install domains (`registry.npmjs.org`, `*.npmjs.org`, `*.npmjs.com`)
@@ -48,7 +48,7 @@ Access control is enforced before execution:
 
 ## Secrets handling
 
-- `SPRITES_TOKEN`, Slack tokens, and GitHub App private key stay on host
+- Sandbox backend token (`SPRITES_TOKEN`), Slack tokens, and GitHub App private key stay on host
 - Worker receives only scoped runtime credentials (`ANTHROPIC_API_KEY`, optional short-lived `GH_TOKEN`)
 
 ## Trade-off

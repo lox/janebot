@@ -11,7 +11,7 @@ const ARTIFACTS_DIR = "/home/sprite/artifacts"
 const SESSIONS_DIR = "/home/sprite/sessions"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
-const parsedTimeout = parseInt(process.env.SPRITE_EXEC_TIMEOUT_MS || "", 10)
+const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
@@ -40,7 +40,7 @@ interface SubagentSession {
   key: string
   channelId: string
   threadTs: string
-  spriteName: string
+  sandboxName: string
   piSessionFile: string
   status: SessionStatus
   runningJobId?: string
@@ -53,7 +53,7 @@ interface SubagentSession {
 
 const sessionsByKey = new Map<string, SubagentSession>()
 const sessionsById = new Map<string, SubagentSession>()
-const readySprites = new Set<string>()
+const readySandboxes = new Set<string>()
 
 function makeThreadKey(channelId: string, threadTs: string): string {
   return `${channelId}:${threadTs}`
@@ -79,7 +79,7 @@ function getSessionByThread(channelId: string, threadTs: string): SubagentSessio
     const session = cacheSession(mapPersistedSession(persisted))
     log.debug("Loaded subagent session from SQLite by thread", {
       subagentSessionId: session.id,
-      sprite: session.spriteName,
+      sandbox: session.sandboxName,
       threadKey,
     })
     return session
@@ -102,7 +102,7 @@ function getSessionById(subagentSessionId: string): SubagentSession | undefined 
     const session = cacheSession(mapPersistedSession(persisted))
     log.debug("Loaded subagent session from SQLite by id", {
       subagentSessionId: session.id,
-      sprite: session.spriteName,
+      sandbox: session.sandboxName,
       threadKey: session.key,
     })
     return session
@@ -127,7 +127,7 @@ function mapPersistedSession(persisted: PersistedSubagentSession): SubagentSessi
     key: persisted.key,
     channelId: persisted.channelId,
     threadTs: persisted.threadTs,
-    spriteName: persisted.spriteName,
+    sandboxName: persisted.sandboxName,
     piSessionFile: persisted.piSessionFile,
     status: persisted.status,
     runningJobId: persisted.runningJobId,
@@ -146,7 +146,7 @@ function persistSession(session: SubagentSession): void {
       key: session.key,
       channelId: session.channelId,
       threadTs: session.threadTs,
-      spriteName: session.spriteName,
+      sandboxName: session.sandboxName,
       piSessionFile: session.piSessionFile,
       status: session.status,
       runningJobId: session.runningJobId,
@@ -164,23 +164,23 @@ function persistSession(session: SubagentSession): void {
   }
 }
 
-async function ensureSpriteReady(client: SandboxClient, spriteName: string): Promise<void> {
-  if (readySprites.has(spriteName)) return
+async function ensureSandboxReady(client: SandboxClient, sandboxName: string): Promise<void> {
+  if (readySandboxes.has(sandboxName)) return
 
-  log.debug("Ensuring sprite is ready", { sprite: spriteName })
-  const existing = await client.get(spriteName)
+  log.debug("Ensuring sandbox is ready", { sandbox: sandboxName })
+  const existing = await client.get(sandboxName)
   if (!existing) {
-    log.info("Creating coding subagent sprite", { sprite: spriteName })
-    await client.create(spriteName)
+    log.info("Creating coding subagent sandbox", { sandbox: sandboxName })
+    await client.create(sandboxName)
   } else {
-    log.debug("Found existing sprite", { sprite: spriteName, status: existing.status })
+    log.debug("Found existing sandbox", { sandbox: sandboxName, status: existing.status })
   }
 
   // Apply egress policy before bootstrap so installs don't depend on permissive defaults.
-  await client.setNetworkPolicy(spriteName, NETWORK_POLICY)
+  await client.setNetworkPolicy(sandboxName, NETWORK_POLICY)
 
   // Ensure required binaries and working directories exist.
-  await client.exec(spriteName, [
+  await client.exec(sandboxName, [
     "bash", "-c",
     [
       `if [ ! -x "${client.piBin}" ]; then npm_config_update_notifier=false "${client.npmBin}" install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
@@ -190,8 +190,8 @@ async function ensureSpriteReady(client: SandboxClient, spriteName: string): Pro
     timeoutMs: 600000,
   })
 
-  readySprites.add(spriteName)
-  log.info("Coding subagent sprite ready", { sprite: spriteName })
+  readySandboxes.add(sandboxName)
+  log.info("Coding subagent sandbox ready", { sandbox: sandboxName })
 }
 
 async function ensureSession(
@@ -202,21 +202,21 @@ async function ensureSession(
   const threadKey = makeThreadKey(channelId, threadTs)
   const existing = getSessionByThread(channelId, threadTs)
   if (existing) {
-    log.debug("Reusing subagent session", { subagentSessionId: existing.id, sprite: existing.spriteName })
+    log.debug("Reusing subagent session", { subagentSessionId: existing.id, sandbox: existing.sandboxName })
     return { session: existing, created: false }
   }
 
   const subagentSessionId = makeSubagentSessionId(threadKey)
-  const spriteName = getSandboxName(channelId, threadTs)
+  const sandboxName = getSandboxName(channelId, threadTs)
 
-  await ensureSpriteReady(client, spriteName)
+  await ensureSandboxReady(client, sandboxName)
 
   const session: SubagentSession = {
     id: subagentSessionId,
     key: threadKey,
     channelId,
     threadTs,
-    spriteName,
+    sandboxName,
     piSessionFile: `${SESSIONS_DIR}/${subagentSessionId}.jsonl`,
     status: "idle",
     turns: 0,
@@ -226,12 +226,12 @@ async function ensureSession(
 
   cacheSession(session)
   persistSession(session)
-  log.debug("Created subagent session", { subagentSessionId, sprite: spriteName, threadKey })
+  log.debug("Created subagent session", { subagentSessionId, sandbox: sandboxName, threadKey })
 
   return { session, created: true }
 }
 
-async function prepareSpriteRun(
+async function prepareSandboxRun(
   client: SandboxClient,
   session: SubagentSession,
   systemPrompt: string | undefined
@@ -252,7 +252,7 @@ async function prepareSpriteRun(
 
   if (systemPrompt) {
     const agentsContent = systemPrompt.replace(/'/g, "'\\''")
-    await client.exec(session.spriteName, [
+    await client.exec(session.sandboxName, [
       "bash", "-c", `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
     ], {
       timeoutMs: 30000,
@@ -260,7 +260,7 @@ async function prepareSpriteRun(
     })
   }
 
-  await client.exec(session.spriteName, [
+  await client.exec(session.sandboxName, [
     "bash", "-c", `rm -rf ${ARTIFACTS_DIR} && mkdir -p ${ARTIFACTS_DIR}`,
   ], {
     timeoutMs: 10000,
@@ -287,7 +287,7 @@ async function prepareSpriteRun(
       parts.push(`git config --global user.email '${config.gitAuthorEmail.replace(/'/g, "'\\''")}'`)
     }
     if (parts.length > 0) {
-      await client.exec(session.spriteName, ["bash", "-c", parts.join(" && ")], {
+      await client.exec(session.sandboxName, ["bash", "-c", parts.join(" && ")], {
         timeoutMs: 10000,
         dir: WORK_DIR,
       })
@@ -299,7 +299,7 @@ async function prepareSpriteRun(
 
 async function collectArtifacts(client: SandboxClient, session: SubagentSession): Promise<GeneratedFile[]> {
   const generatedFiles: GeneratedFile[] = []
-  const artifactResult = await client.exec(session.spriteName,
+  const artifactResult = await client.exec(session.sandboxName,
     ["find", ARTIFACTS_DIR, "-type", "f", "-maxdepth", "2", "-size", "-10M"],
     {
       timeoutMs: 10000,
@@ -315,7 +315,7 @@ async function collectArtifacts(client: SandboxClient, session: SubagentSession)
     const filename = artifactPath.split("/").pop() ?? "file"
     let data: Buffer | undefined
     try {
-      data = await client.downloadFile(session.spriteName, artifactPath)
+      data = await client.downloadFile(session.sandboxName, artifactPath)
     } catch (err) {
       log.warn("Failed to download artifact", {
         path: artifactPath,
@@ -347,7 +347,7 @@ async function isSessionPiProcessRunning(client: SandboxClient, session: Subagen
   ].join(" ")
 
   try {
-    const probe = await client.exec(session.spriteName, ["bash", "-c", probeCommand], {
+    const probe = await client.exec(session.sandboxName, ["bash", "-c", probeCommand], {
       timeoutMs: 10000,
       maxRetries: 1,
       dir: WORK_DIR,
@@ -356,7 +356,7 @@ async function isSessionPiProcessRunning(client: SandboxClient, session: Subagen
   } catch (err) {
     log.warn("Failed to probe subagent process state", {
       subagentSessionId: session.id,
-      sprite: session.spriteName,
+      sandbox: session.sandboxName,
       error: err instanceof Error ? err.message : String(err),
     })
     return false
@@ -371,7 +371,7 @@ async function reconcileRunningSessionState(client: SandboxClient, session: Suba
 
   log.warn("Session marked running but no live pi process found; resetting to idle", {
     subagentSessionId: session.id,
-    sprite: session.spriteName,
+    sandbox: session.sandboxName,
     runningJobId: session.runningJobId,
   })
   session.status = "idle"
@@ -386,14 +386,14 @@ async function sendMessageToSubagent(
   message: string,
   systemPrompt: string | undefined
 ): Promise<{ content: string; generatedFiles: GeneratedFile[]; jobId: string }> {
-  await ensureSpriteReady(client, session.spriteName)
+  await ensureSandboxReady(client, session.sandboxName)
   log.debug("Sending message to coding subagent", {
     subagentSessionId: session.id,
-    sprite: session.spriteName,
+    sandbox: session.sandboxName,
     messagePreview: message.slice(0, 120),
   })
 
-  const env = await prepareSpriteRun(client, session, systemPrompt)
+  const env = await prepareSandboxRun(client, session, systemPrompt)
   const args: string[] = [client.piBin, "--mode", "json", "--session", session.piSessionFile]
 
   if (config.piModel) {
@@ -409,7 +409,7 @@ async function sendMessageToSubagent(
   session.updatedAt = Date.now()
   persistSession(session)
 
-  const result = await client.exec(session.spriteName, args, {
+  const result = await client.exec(session.sandboxName, args, {
     env,
     stdin: message + "\n",
     timeoutMs: EXEC_TIMEOUT_MS,
@@ -485,7 +485,7 @@ export interface RunCodingSubagentResult {
   status: "idle" | "running" | "completed" | "aborted" | "not_found" | "error"
   created?: boolean
   content?: string
-  spriteName?: string
+  sandboxName?: string
   generatedFiles: GeneratedFile[]
 }
 
@@ -495,14 +495,14 @@ function rehydrateSession(channelId: string, threadTs: string): SubagentSession 
 
   const threadKey = makeThreadKey(channelId, threadTs)
   const subagentSessionId = makeSubagentSessionId(threadKey)
-  const spriteName = getSandboxName(channelId, threadTs)
+  const sandboxName = getSandboxName(channelId, threadTs)
 
   const session: SubagentSession = {
     id: subagentSessionId,
     key: threadKey,
     channelId,
     threadTs,
-    spriteName,
+    sandboxName,
     piSessionFile: `${SESSIONS_DIR}/${subagentSessionId}.jsonl`,
     status: "idle",
     turns: 0,
@@ -512,7 +512,7 @@ function rehydrateSession(channelId: string, threadTs: string): SubagentSession 
 
   cacheSession(session)
   persistSession(session)
-  log.debug("Rehydrated subagent session from deterministic keys", { subagentSessionId, spriteName })
+  log.debug("Rehydrated subagent session from deterministic keys", { subagentSessionId, sandboxName })
 
   return session
 }
@@ -544,7 +544,7 @@ export async function runCodingSubagent(
       subagentSessionId: session.id,
       status: session.status,
       created,
-      spriteName: session.spriteName,
+      sandboxName: session.sandboxName,
       generatedFiles: [],
     }
   }
@@ -552,8 +552,8 @@ export async function runCodingSubagent(
   if (input.action === "status") {
     let session = resolveSessionFromInput(input)
     if (!session && input.channelId && input.threadTs) {
-      const sprite = await client.get(getSandboxName(input.channelId, input.threadTs))
-      if (sprite) {
+      const sandbox = await client.get(getSandboxName(input.channelId, input.threadTs))
+      if (sandbox) {
         session = rehydrateSession(input.channelId, input.threadTs)
       }
     }
@@ -564,7 +564,7 @@ export async function runCodingSubagent(
       subagentSessionId: session.id,
       jobId: session.runningJobId || session.lastJobId,
       status: session.status,
-      spriteName: session.spriteName,
+      sandboxName: session.sandboxName,
       generatedFiles: [],
     }
   }
@@ -572,8 +572,8 @@ export async function runCodingSubagent(
   if (input.action === "abort") {
     let session = resolveSessionFromInput(input)
     if (!session && input.channelId && input.threadTs) {
-      const sprite = await client.get(getSandboxName(input.channelId, input.threadTs))
-      if (sprite) {
+      const sandbox = await client.get(getSandboxName(input.channelId, input.threadTs))
+      if (sandbox) {
         session = rehydrateSession(input.channelId, input.threadTs)
       }
     }
@@ -581,7 +581,7 @@ export async function runCodingSubagent(
       return { status: "not_found", generatedFiles: [] }
     }
 
-    await client.exec(session.spriteName, ["pkill", "-f", "pi"], {
+    await client.exec(session.sandboxName, ["pkill", "-f", "pi"], {
       timeoutMs: 10000,
       maxRetries: 1,
       dir: WORK_DIR,
@@ -597,7 +597,7 @@ export async function runCodingSubagent(
     return {
       subagentSessionId: session.id,
       status: "aborted",
-      spriteName: session.spriteName,
+      sandboxName: session.sandboxName,
       generatedFiles: [],
     }
   }
@@ -624,7 +624,7 @@ export async function runCodingSubagent(
       subagentSessionId: session.id,
       jobId: session.runningJobId,
       status: "running",
-      spriteName: session.spriteName,
+      sandboxName: session.sandboxName,
       generatedFiles: [],
       content: "A coding job is already running for this thread.",
     }
@@ -638,7 +638,7 @@ export async function runCodingSubagent(
       status: "completed",
       created,
       content: result.content,
-      spriteName: session.spriteName,
+      sandboxName: session.sandboxName,
       generatedFiles: result.generatedFiles,
     }
   } catch (err) {

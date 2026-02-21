@@ -1,14 +1,14 @@
 #!/usr/bin/env npx tsx
 /**
- * Integration test: janebot → Sprites → Pi → response.
+ * Integration test: janebot → sandbox backend → Pi → response.
  *
- * Tests the full execution path without Slack. Creates a temporary sprite,
+ * Tests the full execution path without Slack. Creates a temporary sandbox,
  * installs Pi, runs a prompt, verifies output parsing, and cleans up.
  *
  * Usage:
- *   pnpm test:sprite                              # Default test prompt
- *   pnpm test:sprite "What is 2+2?"               # Custom prompt
- *   pnpm test:sprite --with-artifacts              # Test artifact creation
+ *   pnpm test:sandbox                             # Default test prompt
+ *   pnpm test:sandbox "What is 2+2?"              # Custom prompt
+ *   pnpm test:sandbox --with-artifacts            # Test artifact creation
  */
 
 import "dotenv/config"
@@ -16,7 +16,7 @@ import { SpritesClient } from "../src/sprites.js"
 import { parsePiOutput } from "../src/sprite-executor.js"
 
 const PI_VERSION = "0.52.9"
-const SPRITE_PATH =
+const SANDBOX_PATH =
   "/.sprite/languages/node/nvm/versions/node/v22.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 async function main() {
@@ -30,13 +30,13 @@ async function main() {
       ? "Write a haiku about coding to /home/sprite/artifacts/haiku.txt. Then tell me what you wrote."
       : "What is 2+2? Reply with just the number.")
 
-  console.log("=== Pi Sprite Integration Test ===\n")
+  console.log("=== Pi Sandbox Integration Test ===\n")
 
-  const spritesToken = process.env.SPRITES_TOKEN
+  const sandboxToken = process.env.SPRITES_TOKEN
   const anthropicKey = process.env.ANTHROPIC_API_KEY
 
-  if (!spritesToken) {
-    console.error("ERROR: SPRITES_TOKEN not set")
+  if (!sandboxToken) {
+    console.error("ERROR: Sandbox token (SPRITES_TOKEN) not set")
     process.exit(1)
   }
   if (!anthropicKey) {
@@ -44,23 +44,23 @@ async function main() {
     process.exit(1)
   }
 
-  console.log("✓ SPRITES_TOKEN set")
+  console.log("✓ Sandbox token (SPRITES_TOKEN) set")
   console.log("✓ ANTHROPIC_API_KEY set")
   console.log()
 
-  const client = new SpritesClient(spritesToken)
-  const spriteName = "jane-test-" + Date.now().toString(36)
+  const client = new SpritesClient(sandboxToken)
+  const sandboxName = "jane-test-" + Date.now().toString(36)
 
   try {
-    // Phase 1: Create sprite
+    // Phase 1: Create sandbox
     let phaseStart = Date.now()
-    console.log(`Creating sprite: ${spriteName}`)
-    await client.create(spriteName)
-    console.log(`✓ Sprite created (${ms(phaseStart)})`)
+    console.log(`Creating sandbox: ${sandboxName}`)
+    await client.create(sandboxName)
+    console.log(`✓ Sandbox created (${ms(phaseStart)})`)
 
     // Phase 2: Set network policy
     phaseStart = Date.now()
-    await client.setNetworkPolicy(spriteName, [
+    await client.setNetworkPolicy(sandboxName, [
       { action: "allow", domain: "registry.npmjs.org" },
       { action: "allow", domain: "*.npmjs.org" },
       { action: "allow", domain: "*.npmjs.com" },
@@ -75,7 +75,7 @@ async function main() {
     phaseStart = Date.now()
     console.log(`\nInstalling Pi v${PI_VERSION}...`)
     const installResult = await client.exec(
-      spriteName,
+      sandboxName,
       [
         "bash",
         "-c",
@@ -91,13 +91,13 @@ async function main() {
 
     // Find Pi binary
     const prefixResult = await client.exec(
-      spriteName,
+      sandboxName,
       ["bash", "-c", "npm prefix -g"],
       { timeoutMs: 10000 }
     )
     const piBin = `${prefixResult.stdout.trim()}/bin/pi`
 
-    const versionResult = await client.exec(spriteName, [piBin, "--version"], {
+    const versionResult = await client.exec(sandboxName, [piBin, "--version"], {
       timeoutMs: 10000,
     })
     console.log(
@@ -107,7 +107,7 @@ async function main() {
     // Phase 4: Write AGENTS.md
     phaseStart = Date.now()
     await client.exec(
-      spriteName,
+      sandboxName,
       [
         "bash",
         "-c",
@@ -119,7 +119,7 @@ async function main() {
 
     // Phase 5: Clean artifacts dir
     await client.exec(
-      spriteName,
+      sandboxName,
       [
         "bash",
         "-c",
@@ -130,7 +130,7 @@ async function main() {
 
     // Phase 6: Execute Pi
     const env: Record<string, string> = {
-      PATH: SPRITE_PATH,
+      PATH: SANDBOX_PATH,
       HOME: "/home/sprite",
       NO_COLOR: "1",
       TERM: "dumb",
@@ -144,7 +144,7 @@ async function main() {
 
     phaseStart = Date.now()
     const result = await client.exec(
-      spriteName,
+      sandboxName,
       [piBin, "--mode", "json", "--no-session"],
       {
         env,
@@ -180,7 +180,7 @@ async function main() {
 
     // Phase 8: Check artifacts
     const artifactResult = await client.exec(
-      spriteName,
+      sandboxName,
       ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2"],
       { timeoutMs: 10000 }
     )
@@ -199,14 +199,14 @@ async function main() {
     }
 
     // Cleanup
-    console.log(`\nCleaning up sprite...`)
-    await client.delete(spriteName)
+    console.log(`\nCleaning up sandbox...`)
+    await client.delete(sandboxName)
     console.log("✓ Done")
   } catch (error) {
     console.error("\nERROR:", error)
     try {
-      await client.delete(spriteName)
-      console.log("(Sprite cleaned up)")
+      await client.delete(sandboxName)
+      console.log("(Sandbox cleaned up)")
     } catch {
       // Ignore cleanup errors
     }
