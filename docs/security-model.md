@@ -14,6 +14,8 @@ The Fly host runs the Slack control loop and a top-level Pi orchestrator session
 
 Each Slack thread is mapped to a dedicated Sprite + Pi session. The session is long-lived and reused across follow-up messages in that thread.
 
+Session metadata is persisted locally in SQLite (`SESSION_DB_PATH`) so thread-to-session mappings survive host process restarts.
+
 Key properties:
 - Isolation boundary is per Slack thread (not per reply)
 - Session state persists across turns for velocity
