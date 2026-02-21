@@ -13,6 +13,7 @@ import {
 import { markdownToSlack } from "md-to-slack"
 import * as log from "./logger.js"
 import { getLastSeenEventTs } from "./orchestrator.js"
+import { buildInitialPendingTurn, type PendingTurn } from "./pending-turn.js"
 import type { GeneratedFile } from "./pi-output.js"
 import { initSandboxClient, getSandboxClient } from "./sandbox.js"
 import { initSessionStore } from "./session-store.js"
@@ -149,17 +150,6 @@ interface ProcessMessageParams {
   isInThread: boolean
   client: typeof app.client
   say: (args: { text: string; thread_ts: string }) => Promise<unknown>
-}
-
-interface PendingTurn {
-  type: "mention" | "dm"
-  userId: string
-  eventTs: string
-  eventTimestamps: string[]
-  message: string
-  isInThread: boolean
-  includeThreadHistory: boolean
-  excludedHistoryEventTs: string[]
 }
 
 function isExpectedCancellationError(error: unknown): boolean {
@@ -315,21 +305,18 @@ async function processMessage(params: ProcessMessageParams): Promise<void> {
     debouncingKeyBySession.set(sessionKey, debounceKey)
     debouncedEventTsByKey.set(debounceKey, [eventTs])
     const initialMessage = await debounce(debounceKey, rawText)
-    const initialEventTimestamps = Array.from(new Set(debouncedEventTsByKey.get(debounceKey) ?? [eventTs]))
-    const initialTurnEventTs = initialEventTimestamps[initialEventTimestamps.length - 1] ?? eventTs
+    const initialEventTimestamps = debouncedEventTsByKey.get(debounceKey) ?? [eventTs]
     debouncingKeyBySession.delete(sessionKey)
     debouncedEventTsByKey.delete(debounceKey)
 
-    activeTurn = {
+    activeTurn = buildInitialPendingTurn({
       type,
       userId,
-      eventTs: initialTurnEventTs,
       eventTimestamps: initialEventTimestamps,
+      fallbackEventTs: eventTs,
       message: initialMessage,
       isInThread,
-      includeThreadHistory: isInThread,
-      excludedHistoryEventTs: [],
-    }
+    })
 
     while (activeTurn) {
       activeTurnStartedAt = Date.now()
