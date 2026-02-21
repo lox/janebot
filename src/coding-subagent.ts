@@ -10,6 +10,7 @@ function workDir(client: SandboxClient): string { return `${client.homeDir}/work
 function artifactsDir(client: SandboxClient): string { return `${client.homeDir}/artifacts` }
 function sessionsDir(client: SandboxClient): string { return `${client.homeDir}/sessions` }
 function ghLocalBinDir(client: SandboxClient): string { return `${client.homeDir}/.local/bin` }
+function miseBinDir(client: SandboxClient): string { return `${client.homeDir}/.local/share/mise/shims` }
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
@@ -32,6 +33,14 @@ const NETWORK_POLICY: SandboxNetworkPolicyRule[] = [
   { action: "allow", domain: "api.github.com" },
   { action: "allow", domain: "raw.githubusercontent.com" },
   { action: "allow", domain: "objects.githubusercontent.com" },
+  { action: "allow", domain: "mise.run" },
+  { action: "allow", domain: "*.mise.run" },
+  { action: "allow", domain: "cache.ruby-lang.org" },
+  { action: "allow", domain: "www.python.org" },
+  { action: "allow", domain: "go.dev" },
+  { action: "allow", domain: "dl.google.com" },
+  { action: "allow", domain: "nodejs.org" },
+  { action: "allow", domain: "*.nodejs.org" },
 ]
 
 type SessionStatus = "idle" | "running" | "error"
@@ -115,6 +124,85 @@ async function ensureGhInstalled(
   }
 
   return true
+}
+
+/**
+ * If the workspace contains a mise config (mise.toml, .mise.toml, or .tool-versions),
+ * trust the directory, install the declared tools, and return the shims PATH prefix.
+ * Returns the mise shims dir if tools were installed, or null if no config found.
+ */
+async function ensureMiseTools(
+  client: SandboxClient,
+  sandboxName: string,
+  dir: string,
+  env: Record<string, string>
+): Promise<string | null> {
+  // Check if any mise/tool-versions config exists in the workspace
+  const check = await client.exec(sandboxName, [
+    "bash", "-c",
+    `test -f mise.toml || test -f .mise.toml || test -f .tool-versions`,
+  ], {
+    timeoutMs: 10000,
+    dir,
+    env,
+  })
+
+  if (check.exitCode !== 0) {
+    log.debug("No mise config found in workspace, skipping mise setup", { sandbox: sandboxName, dir })
+    return null
+  }
+
+  log.info("mise config detected, installing tools", { sandbox: sandboxName, dir })
+
+  // Trust the directory so mise doesn't prompt
+  const trust = await client.exec(sandboxName, [
+    "bash", "-c",
+    `mise trust --all 2>&1`,
+  ], {
+    timeoutMs: 30000,
+    dir,
+    env,
+  })
+  if (trust.exitCode !== 0) {
+    log.warn("mise trust failed", {
+      sandbox: sandboxName,
+      exitCode: trust.exitCode,
+      stderr: trust.stderr || trust.stdout,
+    })
+  }
+
+  // Install all tools declared in the config
+  const install = await client.exec(sandboxName, [
+    "bash", "-c",
+    `mise install --yes 2>&1`,
+  ], {
+    timeoutMs: 600000, // tool installs (compiling ruby etc) can be slow
+    dir,
+    env,
+  })
+  if (install.exitCode !== 0) {
+    log.warn("mise install partially failed — previously installed tools may still be available", {
+      sandbox: sandboxName,
+      exitCode: install.exitCode,
+      output: (install.stderr || install.stdout).slice(0, 1000),
+    })
+    // Don't return null — still return the shims dir so any previously-installed
+    // or partially-installed tools remain on PATH.
+  }
+
+  // Reshim so binaries are available at the shims path
+  await client.exec(sandboxName, [
+    "bash", "-c",
+    `mise reshim 2>&1`,
+  ], {
+    timeoutMs: 30000,
+    dir,
+    env,
+  })
+
+  const shimsDir = miseBinDir(client)
+  log.info("mise tools installed", { sandbox: sandboxName, shimsDir, output: install.stdout.slice(-500) })
+  return shimsDir
 }
 
 function makeThreadKey(channelId: string, threadTs: string): string {
@@ -411,6 +499,17 @@ async function prepareSandboxRun(
         dir: workDir(client),
       })
     }
+  }
+
+  // Auto-detect mise config and install declared tools so they're on PATH for pi.
+  const miseShimsDir = await ensureMiseTools(
+    client,
+    session.sandboxName,
+    workDir(client),
+    { PATH: env.PATH, HOME: env.HOME },
+  )
+  if (miseShimsDir) {
+    env.PATH = `${miseShimsDir}:${env.PATH}`
   }
 
   return env

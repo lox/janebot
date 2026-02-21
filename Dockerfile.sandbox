@@ -2,9 +2,18 @@ FROM node:22-slim
 
 ARG PI_VERSION=0.52.9
 
+# Build dependencies needed by mise-managed language installs (Ruby, Python, etc.)
 RUN apt-get update -qq && \
-    apt-get install -y -qq --no-install-recommends curl git ca-certificates && \
+    apt-get install -y -qq --no-install-recommends \
+      curl git ca-certificates \
+      build-essential libssl-dev libreadline-dev zlib1g-dev libyaml-dev \
+      libffi-dev libgdbm-dev libncurses5-dev libpq-dev && \
     rm -rf /var/lib/apt/lists/*
+
+# Install mise and put it on PATH
+ENV PATH="/root/.local/bin:${PATH}"
+RUN curl -fsSL https://mise.run | sh && \
+    mise settings set experimental true
 
 COPY scripts/bootstrap-sandbox.sh /tmp/bootstrap.sh
 RUN PI_VERSION=${PI_VERSION} bash /tmp/bootstrap.sh && rm /tmp/bootstrap.sh
