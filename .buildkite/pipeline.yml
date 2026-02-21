@@ -23,18 +23,6 @@ steps:
   - label: ":package: Build"
     command: pnpm install && pnpm build
 
-  - label: ":docker: Sandbox Image"
-    command: |
-      docker build -f Dockerfile.sandbox -t ghcr.io/buildkite/janebot-sandbox:${BUILDKITE_COMMIT} .
-      if [[ "${BUILDKITE_BRANCH}" == "main" ]]; then
-        echo "$GHCR_TOKEN" | docker login ghcr.io -u buildkite --password-stdin
-        docker push ghcr.io/buildkite/janebot-sandbox:${BUILDKITE_COMMIT}
-        docker tag ghcr.io/buildkite/janebot-sandbox:${BUILDKITE_COMMIT} ghcr.io/buildkite/janebot-sandbox:latest
-        docker push ghcr.io/buildkite/janebot-sandbox:latest
-      fi
-    secrets:
-      - GHCR_TOKEN
-
   - wait
 
   - block: ":rocket: Deploy to Staging"
