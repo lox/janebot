@@ -108,29 +108,52 @@ async function buildRunner(name: string): Promise<string> {
   log.info("Building runner", { name })
   await client.create(name)
 
-  await client.exec(name, [
+  const piInstall = await client.exec(name, [
     "bash", "-c",
     "npm install -g @mariozechner/pi-coding-agent@0.52.9",
   ], { timeoutMs: 120000 })
+  if (piInstall.exitCode !== 0) {
+    throw new Error(`Failed to install pi: ${piInstall.stderr || piInstall.stdout}`)
+  }
 
-  await client.exec(name, [
+  const ghInstall = await client.exec(name, [
     "bash", "-c",
     [
       "set -o pipefail",
-      "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
-      'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null',
-      "sudo apt-get update -qq",
-      "sudo apt-get install -y -qq gh",
+      'if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi',
+      "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | $SUDO dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
+      'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | $SUDO tee /etc/apt/sources.list.d/github-cli.list > /dev/null',
+      "$SUDO apt-get update -qq",
+      "$SUDO apt-get install -y -qq gh",
     ].join(" && "),
   ], { timeoutMs: 120000 })
 
   await client.exec(name, ["mkdir", "-p", "/home/sprite/artifacts"], { timeoutMs: 10000 })
 
   const ver = await client.exec(name, [client.piBin, "--version"], { timeoutMs: 15000 })
+  if (ver.exitCode !== 0) {
+    throw new Error(`pi binary check failed: ${ver.stderr || ver.stdout}`)
+  }
   log.info("Runner pi installed", { name, version: ver.stdout.trim() })
 
-  const ghVer = await client.exec(name, ["gh", "--version"], { timeoutMs: 15000 })
-  log.info("Runner gh installed", { name, version: ghVer.stdout.split("\n")[0]?.trim() })
+  if (ghInstall.exitCode === 0) {
+    const ghVer = await client.exec(name, ["gh", "--version"], { timeoutMs: 15000 })
+    if (ghVer.exitCode === 0) {
+      log.info("Runner gh installed", { name, version: ghVer.stdout.split("\n")[0]?.trim() })
+    } else {
+      log.warn("Runner gh verification failed; continuing without gh", {
+        name,
+        exitCode: ghVer.exitCode,
+        stderr: ghVer.stderr || ghVer.stdout,
+      })
+    }
+  } else {
+    log.warn("Runner gh install failed; continuing without gh", {
+      name,
+      exitCode: ghInstall.exitCode,
+      stderr: ghInstall.stderr || ghInstall.stdout,
+    })
+  }
 
   await client.setNetworkPolicy(name, NETWORK_POLICY)
   const checkpointId = await client.createCheckpoint(name, CLEAN_CHECKPOINT)

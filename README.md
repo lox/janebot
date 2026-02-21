@@ -43,6 +43,8 @@ Mention `@janebot` in a channel or DM her.
 | `SESSION_DB_PATH` | SQLite file for persistent session mappings |
 | `PI_MODEL` | LLM model (optional, defaults to claude-opus-4-6) |
 | `JANE_LOG_LEVEL` | Log verbosity (`debug`, `info`, `warn`, `error`) |
+| `SANDBOX_BACKEND` | `docker` (default) or `sprites` |
+| `SPRITES_TOKEN` | Required when `SANDBOX_BACKEND=sprites` |
 | `ALLOWED_USER_IDS` | Who can talk to her |
 | `ALLOWED_CHANNEL_IDS` | Where she listens |
 
@@ -55,6 +57,18 @@ pnpm dev
 ```
 
 Logs show requests and response times. Restart to pick up changes.
+
+## REPL
+
+Use the REPL to exercise the same thread-runtime codepath as Slack (`runThreadTurn` + `runControlCommand`):
+
+```bash
+pnpm repl
+pnpm repl -x "status"
+pnpm repl -x "Reply with exactly: ok"
+```
+
+This is intended for architecture-fidelity testing, not a separate execution mode.
 
 ## Deploy
 

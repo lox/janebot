@@ -17,7 +17,7 @@ export interface JanebotConfig {
   allowedUserIds: string[]
   allowedChannelIds: string[]
 
-  // Sandbox backend: "sprites" (remote VMs) or "docker" (local Docker)
+  // Sandbox backend: "docker" (local Docker, default) or "sprites" (remote VMs)
   sandboxBackend: "sprites" | "docker"
 
   // Remote sandbox token (required when sandboxBackend is "sprites")
@@ -26,9 +26,6 @@ export interface JanebotConfig {
   // Git identity for commits made in sandboxes
   gitAuthorName: string | undefined
   gitAuthorEmail: string | undefined
-
-  // Local execution (requires explicit opt-in, no sandbox)
-  allowLocalExecution: boolean
 }
 
 function parseList(value: string | undefined): string[] {
@@ -41,8 +38,8 @@ function parseList(value: string | undefined): string[] {
 
 function parseSandboxBackend(): "sprites" | "docker" {
   const value = (process.env.SANDBOX_BACKEND ?? "").toLowerCase()
-  if (value === "docker") return "docker"
-  return "sprites"
+  if (value === "sprites") return "sprites"
+  return "docker"
 }
 
 export const config: JanebotConfig = {
@@ -59,7 +56,6 @@ export const config: JanebotConfig = {
   spritesToken: process.env.SPRITES_TOKEN,
   gitAuthorName: process.env.GIT_AUTHOR_NAME,
   gitAuthorEmail: process.env.GIT_AUTHOR_EMAIL,
-  allowLocalExecution: process.env.ALLOW_LOCAL_EXECUTION === "true",
 }
 
 /**
