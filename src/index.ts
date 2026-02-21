@@ -21,6 +21,7 @@ import { SpritesClient } from "./sprites.js"
 import { DockerSandboxClient } from "./docker-sandbox.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 import { extractControlCommand, hasSoulPrompt, runControlCommand, runThreadTurn } from "./thread-runtime.js"
+import { formatThreadHistory, type ThreadHistoryMessage } from "./thread-history.js"
 
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
@@ -64,33 +65,13 @@ async function fetchThreadContext(
       ...(afterTs ? { oldest: afterTs } : {}),
     })
 
-    if (!result.messages || result.messages.length <= 1) {
-      return null
-    }
-
-    const excludedEventSet = new Set(excludedEventTs)
-
-    const formatted = result.messages
-      .filter((m) => {
-        if (!m.ts) return false
-        if (Number(m.ts) >= Number(beforeTs)) return false
-        if (afterTs && Number(m.ts) <= Number(afterTs)) return false
-        if (excludedEventSet.has(m.ts)) return false
-        return true
-      })
-      .map((m) => {
-        const isBot = m.user === botUserId || "bot_id" in m
-        const label = isBot ? "Jane" : m.user
-        const text = m.text?.replace(/<@[A-Z0-9]+>/g, "").trim() || ""
-        return `[${label}]: ${text}`
-      })
-      .filter((line) => {
-        const afterColon = line.split(": ").slice(1).join(": ")
-        return afterColon.length > 0
-      })
-      .join("\n")
-
-    return formatted || null
+    return formatThreadHistory({
+      messages: result.messages as ThreadHistoryMessage[] | undefined,
+      botUserId,
+      beforeTs,
+      afterTs,
+      excludedEventTs,
+    })
   } catch (error) {
     log.error("Failed to fetch thread history", error)
     return null
