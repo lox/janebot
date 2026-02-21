@@ -27,6 +27,16 @@ else
   echo "==> GitHub CLI already installed"
 fi
 
+# Ensure mise is on PATH (installed in Dockerfile, lives in ~/.local/bin)
+export PATH="$HOME/.local/bin:$PATH"
+if command -v mise >/dev/null 2>&1; then
+  echo "==> mise already installed: $(mise --version)"
+else
+  echo "==> Installing mise"
+  curl -fsSL https://mise.run | sh
+  mise settings set experimental true
+fi
+
 # Create artifacts directory
 mkdir -p "$HOME/artifacts"
 
@@ -34,4 +44,5 @@ mkdir -p "$HOME/artifacts"
 echo "==> Bootstrap complete"
 echo "pi: $(pi --version 2>/dev/null || echo 'not installed')"
 echo "gh: $(gh --version 2>/dev/null | head -1 || echo 'not installed')"
+echo "mise: $(mise --version 2>/dev/null || echo 'not installed')"
 echo "node: $(node --version)"
