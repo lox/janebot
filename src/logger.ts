@@ -100,6 +100,7 @@ export function startup(config: {
   hasSoul: boolean
   execution: string
   sessionDbPath?: string
+  githubApp?: boolean
 }): void {
   if (!shouldLog("info")) return
   console.log(`
@@ -110,5 +111,6 @@ ${COLORS.cyan}⚡ janebot${COLORS.reset}
    soul: ${config.hasSoul ? "loaded" : "none"}
    execution: ${config.execution}
    session_db: ${config.sessionDbPath || "disabled"}
+   github_app: ${config.githubApp ? "configured" : "not configured"}
 `)
 }

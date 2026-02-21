@@ -1,6 +1,6 @@
 import { config } from "./config.js"
 import * as log from "./logger.js"
-import { acquireRunner } from "./sprite-runners.js"
+import { acquireRunner } from "./sandbox-runners.js"
 import { getSandboxClient } from "./sandbox.js"
 import { getGitHubToken } from "./github-app.js"
 
@@ -11,7 +11,7 @@ const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
 const EXEC_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
   ? parsedTimeout
   : DEFAULT_EXEC_TIMEOUT_MS
-const GH_LOCAL_BIN_DIR = "/home/sprite/.local/bin"
+
 
 interface PiEvent {
   type: string
@@ -124,8 +124,8 @@ export async function executeInSandbox(
     }
 
     const env: Record<string, string> = {
-      PATH: `${sandboxClient.defaultPath}:${GH_LOCAL_BIN_DIR}`,
-      HOME: "/home/sprite",
+      PATH: sandboxClient.defaultPath,
+      HOME: sandboxClient.homeDir,
       NO_COLOR: "1",
       TERM: "dumb",
       CI: "true",
@@ -146,7 +146,7 @@ export async function executeInSandbox(
       setupTasks.push(
         sandboxClient.exec(sandboxName, [
           "bash", "-c",
-          `printf '%s' '${agentsContent}' > /home/sprite/AGENTS.md`,
+          `printf '%s' '${agentsContent}' > ${sandboxClient.homeDir}/AGENTS.md`,
         ], { timeoutMs: 30000 }).then(() => {})
       )
     }
@@ -155,7 +155,7 @@ export async function executeInSandbox(
     setupTasks.push(
       sandboxClient.exec(sandboxName, [
         "bash", "-c",
-        "rm -rf /home/sprite/artifacts && mkdir -p /home/sprite/artifacts",
+        `rm -rf ${sandboxClient.homeDir}/artifacts && mkdir -p ${sandboxClient.homeDir}/artifacts`,
       ], { timeoutMs: 10000 }).then(() => {})
     )
 
@@ -252,7 +252,7 @@ export async function executeInSandbox(
     // Collect artifacts
     const generatedFiles: GeneratedFile[] = []
     const artifactResult = await sandboxClient.exec(sandboxName,
-      ["find", "/home/sprite/artifacts", "-type", "f", "-maxdepth", "2", "-size", "-10M"],
+      ["find", `${sandboxClient.homeDir}/artifacts`, "-type", "f", "-maxdepth", "2", "-size", "-10M"],
       { timeoutMs: 10000 })
     const artifactPaths = artifactResult.stdout.trim().split("\n").filter(Boolean)
 

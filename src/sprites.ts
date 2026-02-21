@@ -53,6 +53,7 @@ export class SpritesClient implements SandboxClient {
   readonly piBin = `${SPRITE_NODE_PREFIX}/bin/pi`
   readonly npmBin = `${SPRITE_NODE_PREFIX}/bin/npm`
   readonly defaultPath = `${SPRITE_NODE_PREFIX}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
+  readonly homeDir = "/home/sprite"
 
   private token: string
   private baseUrl: string

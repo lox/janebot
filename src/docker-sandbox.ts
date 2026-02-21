@@ -18,12 +18,13 @@ import type {
   SandboxNetworkPolicyRule,
 } from "./sandbox.js"
 
-const DOCKER_IMAGE = process.env.DOCKER_SANDBOX_IMAGE ?? "node:22-slim"
+const DOCKER_IMAGE = process.env.DOCKER_SANDBOX_IMAGE ?? "ghcr.io/buildkite/janebot-sandbox:latest"
 
 export class DockerSandboxClient implements SandboxClient {
   readonly piBin = "/usr/local/bin/pi"
   readonly npmBin = "/usr/local/bin/npm"
   readonly defaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  readonly homeDir = "/root"
 
   private async docker(
     args: string[],

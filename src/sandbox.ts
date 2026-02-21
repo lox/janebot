@@ -44,6 +44,8 @@ export interface SandboxClient {
   readonly defaultPath: string
   /** Path to npm binary inside the sandbox */
   readonly npmBin: string
+  /** Home directory inside the sandbox */
+  readonly homeDir: string
 
   get(name: string): Promise<SandboxInfo | null>
   create(name: string): Promise<SandboxInfo>

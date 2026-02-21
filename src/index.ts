@@ -6,7 +6,7 @@ import { debounce, cancel } from "./debouncer.js"
 import { markdownToSlack } from "md-to-slack"
 import * as log from "./logger.js"
 import { getLastSeenEventTs } from "./orchestrator.js"
-import type { GeneratedFile } from "./sprite-executor.js"
+import type { GeneratedFile } from "./sandbox-executor.js"
 import { initSandboxClient, getSandboxClient } from "./sandbox.js"
 import { initSessionStore } from "./session-store.js"
 import { SpritesClient } from "./sprites.js"
@@ -405,6 +405,7 @@ async function main() {
     hasSoul: hasSoulPrompt(),
     execution: `orchestrator + ${config.sandboxBackend} workers`,
     sessionDbPath: config.sessionDbPath,
+    githubApp: !!(process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY && process.env.GITHUB_APP_INSTALLATION_ID),
   })
 
   // Run diagnostics in background so Slack connectivity is never blocked.
