@@ -328,6 +328,50 @@ async function collectArtifacts(client: SandboxClient, session: SubagentSession)
   return generatedFiles
 }
 
+async function isSessionPiProcessRunning(client: SandboxClient, session: SubagentSession): Promise<boolean> {
+  const escapedSessionPath = session.piSessionFile.replace(/'/g, "'\\''")
+  const probeCommand = [
+    "if command -v pgrep >/dev/null 2>&1; then",
+    `  pgrep -af pi | grep -F -- '--session ${escapedSessionPath}' >/dev/null`,
+    "else",
+    `  ps -eo args= | grep -F -- '--session ${escapedSessionPath}' >/dev/null`,
+    "fi",
+  ].join(" ")
+
+  try {
+    const probe = await client.exec(session.spriteName, ["bash", "-c", probeCommand], {
+      timeoutMs: 10000,
+      maxRetries: 1,
+      dir: WORK_DIR,
+    })
+    return probe.exitCode === 0
+  } catch (err) {
+    log.warn("Failed to probe subagent process state", {
+      subagentSessionId: session.id,
+      sprite: session.spriteName,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
+  }
+}
+
+async function reconcileRunningSessionState(client: SandboxClient, session: SubagentSession): Promise<void> {
+  if (session.status !== "running") return
+
+  const stillRunning = await isSessionPiProcessRunning(client, session)
+  if (stillRunning) return
+
+  log.warn("Session marked running but no live pi process found; resetting to idle", {
+    subagentSessionId: session.id,
+    sprite: session.spriteName,
+    runningJobId: session.runningJobId,
+  })
+  session.status = "idle"
+  session.runningJobId = undefined
+  session.updatedAt = Date.now()
+  persistSession(session)
+}
+
 async function sendMessageToSubagent(
   client: SandboxClient,
   session: SubagentSession,
@@ -561,6 +605,10 @@ export async function runCodingSubagent(
     const createdResult = await ensureSession(client, input.channelId, input.threadTs)
     session = createdResult.session
     created = createdResult.created
+  }
+
+  if (session.status === "running") {
+    await reconcileRunningSessionState(client, session)
   }
 
   if (session.status === "running") {
