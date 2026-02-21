@@ -9,6 +9,7 @@ import { getSessionStore, type PersistedSubagentSession } from "./session-store.
 const WORK_DIR = "/home/sprite/workspace"
 const ARTIFACTS_DIR = "/home/sprite/artifacts"
 const SESSIONS_DIR = "/home/sprite/sessions"
+const GH_LOCAL_BIN_DIR = "/home/sprite/.local/bin"
 
 const DEFAULT_EXEC_TIMEOUT_MS = 600000
 const parsedTimeout = parseInt(process.env.SANDBOX_EXEC_TIMEOUT_MS || "", 10)
@@ -184,7 +185,29 @@ async function ensureSandboxReady(client: SandboxClient, sandboxName: string): P
     "bash", "-c",
     [
       `if [ ! -x "${client.piBin}" ]; then npm_config_update_notifier=false "${client.npmBin}" install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
-      `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR}`,
+      [
+        `if ! command -v gh >/dev/null 2>&1 && [ ! -x "${GH_LOCAL_BIN_DIR}/gh" ]; then`,
+        "  set -euo pipefail",
+        "  arch=$(uname -m)",
+        "  case \"$arch\" in",
+        "    x86_64|amd64) gh_arch=\"amd64\" ;;",
+        "    aarch64|arm64) gh_arch=\"arm64\" ;;",
+        "    *) echo \"Unsupported architecture for gh: $arch\" >&2; exit 1 ;;",
+        "  esac",
+        "  gh_tag=$(node -e 'const url = \"https://api.github.com/repos/cli/cli/releases/latest\"; fetch(url).then(async (res) => { if (!res.ok) throw new Error(String(res.status)); const body = await res.json(); process.stdout.write(body.tag_name || \"\"); }).catch((err) => { console.error(err.message); process.exit(1); });')",
+        "  if [ -z \"$gh_tag\" ]; then",
+        "    echo \"Unable to resolve gh release tag\" >&2",
+        "    exit 1",
+        "  fi",
+        "  tmp_dir=$(mktemp -d)",
+        "  trap 'rm -rf \"$tmp_dir\"' EXIT",
+        "  curl -fsSL \"https://github.com/cli/cli/releases/download/${gh_tag}/gh_${gh_tag#v}_linux_${gh_arch}.tar.gz\" -o \"$tmp_dir/gh.tgz\"",
+        "  tar -xzf \"$tmp_dir/gh.tgz\" -C \"$tmp_dir\"",
+        `  mkdir -p ${GH_LOCAL_BIN_DIR}`,
+        "  install \"$tmp_dir/gh_${gh_tag#v}_linux_${gh_arch}/bin/gh\" " + `${GH_LOCAL_BIN_DIR}/gh`,
+        "fi",
+      ].join("\n"),
+      `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR} ${GH_LOCAL_BIN_DIR}`,
     ].join(" && "),
   ], {
     timeoutMs: 600000,
@@ -237,7 +260,7 @@ async function prepareSandboxRun(
   systemPrompt: string | undefined
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {
-    PATH: client.defaultPath,
+    PATH: `${client.defaultPath}:${GH_LOCAL_BIN_DIR}`,
     HOME: "/home/sprite",
     NO_COLOR: "1",
     TERM: "dumb",
@@ -275,6 +298,44 @@ async function prepareSandboxRun(
   })
 
   if (githubToken) {
+    const ghAuthEnv = {
+      PATH: env.PATH,
+      HOME: env.HOME,
+    }
+    const authResult = await client.exec(session.sandboxName, [
+      "gh", "auth", "login", "--hostname", "github.com", "--with-token",
+    ], {
+      env: ghAuthEnv,
+      stdin: `${githubToken}\n`,
+      timeoutMs: 30000,
+      dir: WORK_DIR,
+    })
+    if (authResult.exitCode !== 0) {
+      log.warn("GitHub auth failed for subagent", {
+        sandbox: session.sandboxName,
+        exitCode: authResult.exitCode,
+        stderr: authResult.stderr || authResult.stdout,
+      })
+    } else {
+      const setupGitResult = await client.exec(session.sandboxName, [
+        "gh", "auth", "setup-git", "--hostname", "github.com",
+      ], {
+        env: ghAuthEnv,
+        timeoutMs: 30000,
+        dir: WORK_DIR,
+      })
+      if (setupGitResult.exitCode !== 0) {
+        log.warn("GitHub git credential setup failed for subagent", {
+          sandbox: session.sandboxName,
+          exitCode: setupGitResult.exitCode,
+          stderr: setupGitResult.stderr || setupGitResult.stdout,
+        })
+      } else {
+        log.info("GitHub CLI authenticated and git credentials configured in subagent sandbox", {
+          sandbox: session.sandboxName,
+        })
+      }
+    }
     env.GH_TOKEN = githubToken
   }
 
