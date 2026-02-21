@@ -334,7 +334,15 @@ async function isSessionPiProcessRunning(client: SandboxClient, session: Subagen
     "if command -v pgrep >/dev/null 2>&1; then",
     `  pgrep -af pi | grep -F -- '--session ${escapedSessionPath}' >/dev/null`,
     "else",
-    `  ps -eo args= | grep -F -- '--session ${escapedSessionPath}' >/dev/null`,
+    `  session_arg='--session ${escapedSessionPath}'`,
+    "  while read -r pid args; do",
+    "    [ -z \"${pid:-}\" ] && continue",
+    "    [ \"$pid\" = \"$$\" ] && continue",
+    "    if [[ \"$args\" == *\"$session_arg\"* ]]; then",
+    "      exit 0",
+    "    fi",
+    "  done < <(ps -eo pid=,args=)",
+    "  exit 1",
     "fi",
   ].join(" ")
 
