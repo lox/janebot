@@ -181,10 +181,23 @@ async function ensureSandboxReady(client: SandboxClient, sandboxName: string): P
   await client.setNetworkPolicy(sandboxName, NETWORK_POLICY)
 
   // Ensure required binaries and working directories exist.
-  await client.exec(sandboxName, [
+  const coreSetup = await client.exec(sandboxName, [
     "bash", "-c",
     [
       `if [ ! -x "${client.piBin}" ]; then npm_config_update_notifier=false "${client.npmBin}" install -g --no-audit --no-fund @mariozechner/pi-coding-agent@0.52.9; fi`,
+      `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR} ${GH_LOCAL_BIN_DIR}`,
+    ].join(" && "),
+  ], {
+    timeoutMs: 600000,
+  })
+  if (coreSetup.exitCode !== 0) {
+    throw new Error(`Failed to bootstrap subagent sandbox core dependencies: ${coreSetup.stderr || coreSetup.stdout}`)
+  }
+
+  // gh install is optional. If this fails we still allow runs with GH_TOKEN env.
+  const ghSetup = await client.exec(sandboxName, [
+    "bash", "-c",
+    [
       [
         `if ! command -v gh >/dev/null 2>&1 && [ ! -x "${GH_LOCAL_BIN_DIR}/gh" ]; then`,
         "  set -euo pipefail",
@@ -207,11 +220,17 @@ async function ensureSandboxReady(client: SandboxClient, sandboxName: string): P
         "  install \"$tmp_dir/gh_${gh_tag#v}_linux_${gh_arch}/bin/gh\" " + `${GH_LOCAL_BIN_DIR}/gh`,
         "fi",
       ].join("\n"),
-      `mkdir -p ${WORK_DIR} ${ARTIFACTS_DIR} ${SESSIONS_DIR} ${GH_LOCAL_BIN_DIR}`,
-    ].join(" && "),
+    ].join("\n"),
   ], {
     timeoutMs: 600000,
   })
+  if (ghSetup.exitCode !== 0) {
+    log.warn("Failed to install gh in subagent sandbox; continuing without gh", {
+      sandbox: sandboxName,
+      exitCode: ghSetup.exitCode,
+      stderr: ghSetup.stderr || ghSetup.stdout,
+    })
+  }
 
   readySandboxes.add(sandboxName)
   log.info("Coding subagent sandbox ready", { sandbox: sandboxName })
