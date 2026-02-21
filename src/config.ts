@@ -1,4 +1,5 @@
 import "dotenv/config"
+import { join } from "node:path"
 
 export interface JanebotConfig {
   // Pi settings
@@ -10,6 +11,7 @@ export interface JanebotConfig {
   debounceMs: number
   maxResponseLength: number
   subagentPrewarmCount: number
+  sessionDbPath: string
 
   // Authorization (empty arrays = allow all)
   allowedUserIds: string[]
@@ -50,6 +52,7 @@ export const config: JanebotConfig = {
   debounceMs: parseInt(process.env.DEBOUNCE_MS ?? "1500", 10),
   maxResponseLength: parseInt(process.env.MAX_RESPONSE_LENGTH ?? "10000", 10),
   subagentPrewarmCount: parseInt(process.env.SUBAGENT_PREWARM_COUNT ?? "1", 10),
+  sessionDbPath: process.env.SESSION_DB_PATH || join(process.env.WORKSPACE_DIR ?? process.cwd(), ".janebot", "state.sqlite"),
   allowedUserIds: parseList(process.env.ALLOWED_USER_IDS),
   allowedChannelIds: parseList(process.env.ALLOWED_CHANNEL_IDS),
   sandboxBackend: parseSandboxBackend(),

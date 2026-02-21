@@ -125,7 +125,7 @@ A minimal long-running Slack bot that uses the [Amp SDK](https://ampcode.com/man
 **Goal**: Survive restarts, handle edge cases.
 
 **Deliverables**:
-- [ ] Persist session mappings (SQLite or JSON file)
+- [x] Persist session mappings (SQLite)
 - [ ] Graceful shutdown (finish current request)
 - [ ] Rate limiting per user
 - [ ] Error recovery and retry logic

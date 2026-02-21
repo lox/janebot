@@ -4,9 +4,11 @@
 
 Jane is a Slack bot that orchestrates long-lived coding subagents in Sprites. She has opinions and won't say "Great question!".
 
-[SOUL.md](./SOUL.md) defines her personality. [docs/threads.md](./docs/threads.md) explains the thread model. [docs/security-model.md](./docs/security-model.md) covers isolation, credentials, and what Jane can and can't do.
+[SOUL.md](./SOUL.md) defines her personality. [docs/threads.md](./docs/threads.md) explains the thread model. [docs/security-model.md](./docs/security-model.md) covers isolation, credentials, and what Jane can and can't do. [docs/session-store.md](./docs/session-store.md) documents SQLite session persistence.
 
 ## Setup
+
+Requires Node.js 22+.
 
 1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) using `slack-manifest.yaml`
 2. Generate an App-Level Token with `connections:write` scope
@@ -38,6 +40,7 @@ Mention `@janebot` in a channel or DM her.
 | `SLACK_APP_TOKEN` | App-level token (`xapp-...`) |
 | `ANTHROPIC_API_KEY` | From your Anthropic account |
 | `WORKSPACE_DIR` | Where Jane works |
+| `SESSION_DB_PATH` | SQLite file for persistent session mappings |
 | `PI_MODEL` | LLM model (optional, defaults to claude-opus-4-6) |
 | `JANE_LOG_LEVEL` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `ALLOWED_USER_IDS` | Who can talk to her |

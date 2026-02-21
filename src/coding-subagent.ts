@@ -4,6 +4,7 @@ import { getGitHubToken } from "./github-app.js"
 import * as log from "./logger.js"
 import { parsePiOutput, type GeneratedFile } from "./sprite-executor.js"
 import { getSandboxClient, getSandboxName, type SandboxClient, type SandboxNetworkPolicyRule } from "./sandbox.js"
+import { getSessionStore, type PersistedSubagentSession } from "./session-store.js"
 
 const WORK_DIR = "/home/sprite/workspace"
 const ARTIFACTS_DIR = "/home/sprite/artifacts"
@@ -37,6 +38,8 @@ type SessionStatus = "idle" | "running" | "error"
 interface SubagentSession {
   id: string
   key: string
+  channelId: string
+  threadTs: string
   spriteName: string
   piSessionFile: string
   status: SessionStatus
@@ -66,11 +69,99 @@ function makeJobId(): string {
 }
 
 function getSessionByThread(channelId: string, threadTs: string): SubagentSession | undefined {
-  return sessionsByKey.get(makeThreadKey(channelId, threadTs))
+  const threadKey = makeThreadKey(channelId, threadTs)
+  const cached = sessionsByKey.get(threadKey)
+  if (cached) return cached
+
+  try {
+    const persisted = getSessionStore().getByThread(channelId, threadTs)
+    if (!persisted) return undefined
+    const session = cacheSession(mapPersistedSession(persisted))
+    log.debug("Loaded subagent session from SQLite by thread", {
+      subagentSessionId: session.id,
+      sprite: session.spriteName,
+      threadKey,
+    })
+    return session
+  } catch (err) {
+    log.warn("Failed to load subagent session from SQLite by thread", {
+      threadKey,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return undefined
+  }
 }
 
 function getSessionById(subagentSessionId: string): SubagentSession | undefined {
-  return sessionsById.get(subagentSessionId)
+  const cached = sessionsById.get(subagentSessionId)
+  if (cached) return cached
+
+  try {
+    const persisted = getSessionStore().getById(subagentSessionId)
+    if (!persisted) return undefined
+    const session = cacheSession(mapPersistedSession(persisted))
+    log.debug("Loaded subagent session from SQLite by id", {
+      subagentSessionId: session.id,
+      sprite: session.spriteName,
+      threadKey: session.key,
+    })
+    return session
+  } catch (err) {
+    log.warn("Failed to load subagent session from SQLite by id", {
+      subagentSessionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return undefined
+  }
+}
+
+function cacheSession(session: SubagentSession): SubagentSession {
+  sessionsByKey.set(session.key, session)
+  sessionsById.set(session.id, session)
+  return session
+}
+
+function mapPersistedSession(persisted: PersistedSubagentSession): SubagentSession {
+  return {
+    id: persisted.id,
+    key: persisted.key,
+    channelId: persisted.channelId,
+    threadTs: persisted.threadTs,
+    spriteName: persisted.spriteName,
+    piSessionFile: persisted.piSessionFile,
+    status: persisted.status,
+    runningJobId: persisted.runningJobId,
+    lastJobId: persisted.lastJobId,
+    lastError: persisted.lastError,
+    turns: persisted.turns,
+    createdAt: persisted.createdAt,
+    updatedAt: persisted.updatedAt,
+  }
+}
+
+function persistSession(session: SubagentSession): void {
+  try {
+    getSessionStore().upsert({
+      id: session.id,
+      key: session.key,
+      channelId: session.channelId,
+      threadTs: session.threadTs,
+      spriteName: session.spriteName,
+      piSessionFile: session.piSessionFile,
+      status: session.status,
+      runningJobId: session.runningJobId,
+      lastJobId: session.lastJobId,
+      lastError: session.lastError,
+      turns: session.turns,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    })
+  } catch (err) {
+    log.warn("Failed to persist subagent session to SQLite", {
+      subagentSessionId: session.id,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
 }
 
 async function ensureSpriteReady(client: SandboxClient, spriteName: string): Promise<void> {
@@ -109,7 +200,7 @@ async function ensureSession(
   threadTs: string
 ): Promise<{ session: SubagentSession; created: boolean }> {
   const threadKey = makeThreadKey(channelId, threadTs)
-  const existing = sessionsByKey.get(threadKey)
+  const existing = getSessionByThread(channelId, threadTs)
   if (existing) {
     log.debug("Reusing subagent session", { subagentSessionId: existing.id, sprite: existing.spriteName })
     return { session: existing, created: false }
@@ -123,6 +214,8 @@ async function ensureSession(
   const session: SubagentSession = {
     id: subagentSessionId,
     key: threadKey,
+    channelId,
+    threadTs,
     spriteName,
     piSessionFile: `${SESSIONS_DIR}/${subagentSessionId}.jsonl`,
     status: "idle",
@@ -131,8 +224,8 @@ async function ensureSession(
     updatedAt: Date.now(),
   }
 
-  sessionsByKey.set(threadKey, session)
-  sessionsById.set(subagentSessionId, session)
+  cacheSession(session)
+  persistSession(session)
   log.debug("Created subagent session", { subagentSessionId, sprite: spriteName, threadKey })
 
   return { session, created: true }
@@ -235,6 +328,58 @@ async function collectArtifacts(client: SandboxClient, session: SubagentSession)
   return generatedFiles
 }
 
+async function isSessionPiProcessRunning(client: SandboxClient, session: SubagentSession): Promise<boolean> {
+  const escapedSessionPath = session.piSessionFile.replace(/'/g, "'\\''")
+  const probeCommand = [
+    "if command -v pgrep >/dev/null 2>&1; then",
+    `  pgrep -af pi | grep -F -- '--session ${escapedSessionPath}' >/dev/null`,
+    "else",
+    `  session_arg='--session ${escapedSessionPath}'`,
+    "  while read -r pid args; do",
+    "    [ -z \"${pid:-}\" ] && continue",
+    "    [ \"$pid\" = \"$$\" ] && continue",
+    "    if [[ \"$args\" == *\"$session_arg\"* ]]; then",
+    "      exit 0",
+    "    fi",
+    "  done < <(ps -eo pid=,args=)",
+    "  exit 1",
+    "fi",
+  ].join(" ")
+
+  try {
+    const probe = await client.exec(session.spriteName, ["bash", "-c", probeCommand], {
+      timeoutMs: 10000,
+      maxRetries: 1,
+      dir: WORK_DIR,
+    })
+    return probe.exitCode === 0
+  } catch (err) {
+    log.warn("Failed to probe subagent process state", {
+      subagentSessionId: session.id,
+      sprite: session.spriteName,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
+  }
+}
+
+async function reconcileRunningSessionState(client: SandboxClient, session: SubagentSession): Promise<void> {
+  if (session.status !== "running") return
+
+  const stillRunning = await isSessionPiProcessRunning(client, session)
+  if (stillRunning) return
+
+  log.warn("Session marked running but no live pi process found; resetting to idle", {
+    subagentSessionId: session.id,
+    sprite: session.spriteName,
+    runningJobId: session.runningJobId,
+  })
+  session.status = "idle"
+  session.runningJobId = undefined
+  session.updatedAt = Date.now()
+  persistSession(session)
+}
+
 async function sendMessageToSubagent(
   client: SandboxClient,
   session: SubagentSession,
@@ -262,6 +407,7 @@ async function sendMessageToSubagent(
   session.runningJobId = jobId
   session.status = "running"
   session.updatedAt = Date.now()
+  persistSession(session)
 
   const result = await client.exec(session.spriteName, args, {
     env,
@@ -285,9 +431,11 @@ async function sendMessageToSubagent(
 
   session.lastJobId = jobId
   session.runningJobId = undefined
+  session.lastError = undefined
   session.status = "idle"
   session.turns += 1
   session.updatedAt = Date.now()
+  persistSession(session)
 
   return {
     content: content || "Done.",
@@ -342,6 +490,9 @@ export interface RunCodingSubagentResult {
 }
 
 function rehydrateSession(channelId: string, threadTs: string): SubagentSession {
+  const existing = getSessionByThread(channelId, threadTs)
+  if (existing) return existing
+
   const threadKey = makeThreadKey(channelId, threadTs)
   const subagentSessionId = makeSubagentSessionId(threadKey)
   const spriteName = getSandboxName(channelId, threadTs)
@@ -349,6 +500,8 @@ function rehydrateSession(channelId: string, threadTs: string): SubagentSession 
   const session: SubagentSession = {
     id: subagentSessionId,
     key: threadKey,
+    channelId,
+    threadTs,
     spriteName,
     piSessionFile: `${SESSIONS_DIR}/${subagentSessionId}.jsonl`,
     status: "idle",
@@ -357,8 +510,8 @@ function rehydrateSession(channelId: string, threadTs: string): SubagentSession 
     updatedAt: Date.now(),
   }
 
-  sessionsByKey.set(threadKey, session)
-  sessionsById.set(subagentSessionId, session)
+  cacheSession(session)
+  persistSession(session)
   log.debug("Rehydrated subagent session from deterministic keys", { subagentSessionId, spriteName })
 
   return session
@@ -439,6 +592,7 @@ export async function runCodingSubagent(
     session.runningJobId = undefined
     session.status = "idle"
     session.updatedAt = Date.now()
+    persistSession(session)
 
     return {
       subagentSessionId: session.id,
@@ -459,6 +613,10 @@ export async function runCodingSubagent(
     const createdResult = await ensureSession(client, input.channelId, input.threadTs)
     session = createdResult.session
     created = createdResult.created
+  }
+
+  if (session.status === "running") {
+    await reconcileRunningSessionState(client, session)
   }
 
   if (session.status === "running") {
@@ -488,6 +646,7 @@ export async function runCodingSubagent(
     session.lastError = err instanceof Error ? err.message : String(err)
     session.runningJobId = undefined
     session.updatedAt = Date.now()
+    persistSession(session)
     throw err
   }
 }

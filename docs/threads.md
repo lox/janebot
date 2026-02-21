@@ -36,3 +36,5 @@ Each Slack thread maps to:
 - a stable `subagent_session_id` and Sprite name derived from `(channel_id, thread_ts)`
 
 This enables follow-up messages to continue the same coding session without replaying full thread history each turn.
+
+Thread/session mappings are stored in SQLite so janebot can recover them after restarts.

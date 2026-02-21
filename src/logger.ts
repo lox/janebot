@@ -99,6 +99,7 @@ export function startup(config: {
   debounce: number
   hasSoul: boolean
   execution: string
+  sessionDbPath?: string
 }): void {
   if (!shouldLog("info")) return
   console.log(`
@@ -108,5 +109,6 @@ ${COLORS.cyan}⚡ janebot${COLORS.reset}
    debounce: ${config.debounce}ms
    soul: ${config.hasSoul ? "loaded" : "none"}
    execution: ${config.execution}
+   session_db: ${config.sessionDbPath || "disabled"}
 `)
 }

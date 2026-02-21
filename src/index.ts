@@ -12,6 +12,7 @@ import { runCodingSubagent } from "./coding-subagent.js"
 import { hasOrchestratorSession, getLastSeenEventTs, runOrchestratorTurn } from "./orchestrator.js"
 import type { GeneratedFile } from "./sprite-executor.js"
 import { initSandboxClient, getSandboxClient } from "./sandbox.js"
+import { initSessionStore } from "./session-store.js"
 import { SpritesClient } from "./sprites.js"
 import { DockerSandboxClient } from "./docker-sandbox.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
@@ -507,6 +508,8 @@ function createSandboxClient() {
 
 // Start the app
 async function main() {
+  initSessionStore(config.sessionDbPath)
+
   const client = createSandboxClient()
   initSandboxClient(client)
 
@@ -518,6 +521,7 @@ async function main() {
     debounce: config.debounceMs,
     hasSoul: !!soulPrompt,
     execution: `orchestrator + ${config.sandboxBackend} workers`,
+    sessionDbPath: config.sessionDbPath,
   })
 
   // Run diagnostics in background so Slack connectivity is never blocked.
