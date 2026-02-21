@@ -7,6 +7,8 @@
   "scripts": {
     "test": "tsx --test src/*.test.ts",
     "test:sandbox": "tsx scripts/test-sandbox-execution.ts",
+    "sandbox:image-tag": "node scripts/sandbox-image-tag.mjs",
+    "start:prod": "bash scripts/run-prod.sh",
     "repl": "tsx scripts/repl.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
