@@ -132,8 +132,13 @@ async function runOnce(prompt: string): Promise<void> {
 
   const command = extractControlCommand(prompt)
   if (command) {
-    const result = await runControlCommand(command, FAKE_CHANNEL_ID, threadTs)
-    console.log(result)
+    try {
+      const result = await runControlCommand(command, FAKE_CHANNEL_ID, threadTs)
+      console.log(result)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.log(`❌ Error: ${message}`)
+    }
     return
   }
 
@@ -203,15 +208,20 @@ async function runInteractive(): Promise<void> {
 
       const command = extractControlCommand(trimmed)
       if (command) {
-        const result = await runControlCommand(command, FAKE_CHANNEL_ID, threadTs)
-        if (command === "status") {
-          const orchestratorExists = hasOrchestratorSession(FAKE_CHANNEL_ID, threadTs)
-          console.log(`\x1b[90m  Thread: ${FAKE_CHANNEL_ID}:${threadTs}\x1b[0m`)
-          console.log(`\x1b[90m  Orchestrator session: ${orchestratorExists ? "active" : "not created"}\x1b[0m`)
-          console.log(`\x1b[90m  Subagent: ${result}\x1b[0m`)
-          console.log(`\x1b[90m  Messages: ${messageCount}\x1b[0m`)
-        } else {
-          console.log(`\x1b[90m  ${result}\x1b[0m`)
+        try {
+          const result = await runControlCommand(command, FAKE_CHANNEL_ID, threadTs)
+          if (command === "status") {
+            const orchestratorExists = hasOrchestratorSession(FAKE_CHANNEL_ID, threadTs)
+            console.log(`\x1b[90m  Thread: ${FAKE_CHANNEL_ID}:${threadTs}\x1b[0m`)
+            console.log(`\x1b[90m  Orchestrator session: ${orchestratorExists ? "active" : "not created"}\x1b[0m`)
+            console.log(`\x1b[90m  Subagent: ${result}\x1b[0m`)
+            console.log(`\x1b[90m  Messages: ${messageCount}\x1b[0m`)
+          } else {
+            console.log(`\x1b[90m  ${result}\x1b[0m`)
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          console.log(`\x1b[90m  ❌ Error: ${message}\x1b[0m`)
         }
         console.log()
         prompt()
