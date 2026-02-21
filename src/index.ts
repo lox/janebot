@@ -22,6 +22,7 @@ import { DockerSandboxClient } from "./docker-sandbox.js"
 import { cleanSlackMessage, formatErrorForUser, splitIntoChunks } from "./helpers.js"
 import { extractControlCommand, hasSoulPrompt, runControlCommand, runThreadTurn } from "./thread-runtime.js"
 import { formatThreadHistory, type ThreadHistoryMessage } from "./thread-history.js"
+import { isExpectedCancellationError } from "./cancellation.js"
 
 // Track in-flight requests to prevent duplicate processing
 const inFlight = new Set<string>()
@@ -131,14 +132,6 @@ interface ProcessMessageParams {
   isInThread: boolean
   client: typeof app.client
   say: (args: { text: string; thread_ts: string }) => Promise<unknown>
-}
-
-function isExpectedCancellationError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  if (error.name === "AbortError") return true
-
-  const message = error.message.toLowerCase()
-  return message.includes("cancelled") || message.includes("canceled") || message.includes("aborted")
 }
 
 async function executePendingTurn(params: {
